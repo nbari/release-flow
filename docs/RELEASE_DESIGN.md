@@ -30,6 +30,11 @@ For immutable GitHub Releases, stage assets in a draft, verify the complete chec
 8. An older publisher finishes late: it must not roll back mutable `latest` references.
 9. Artifact storage expires or is missing: report unrecoverable source artifact, do not fabricate replacement bytes.
 
-## Bootstrap milestone
+## Milestone 1: Candidate preparation and verification
 
-`CI` and `Candidate` are the first executable pieces. The candidate job consumes successful `CI OK` for its exact commit, produces one Linux archive, writes a SHA256 manifest, and downloads/verifies that candidate in a separate job. It intentionally stops short of version mutation, branch promotion and publishing. These are future operations, not promises implied by the bootstrap workflows.
+`PREPARED` and `VALIDATED` are now fully implemented and automated:
+- Candidate preparation runs in an isolated Git worktree via `just release-prepare` (`scripts/release-prepare.sh`).
+- The version bump happens inside the worktree through the project adapter, creating a versioned candidate commit `C` with release trailers (`Release-Version`, `Release-Mode`, `Release-Base-Branch`, `Release-Base-Commit`).
+- Base integration branches (`develop` or `sandbox`) and local checkouts remain completely untouched.
+- Pushing the candidate branch (`release/**`) triggers `.github/workflows/candidate.yml`, which verifies candidate identity in `guard`, executes project tests and packaging in the same run, writes a versioned `manifest.json` (v1) and `SHA256SUMS`, and downloads and independently verifies the artifacts.
+- See [ADOPTION.md](ADOPTION.md) for the Adapter Protocol v1 and adoption guide.

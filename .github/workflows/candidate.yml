@@ -1,108 +1,235 @@
 name: Candidate
 
 on:
-  workflow_dispatch:
+  push:
+    branches: ['release/**']
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: candidate-${{ github.sha }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   guard:
-    name: Verify validated commit
-    runs-on: ubuntu-latest
+    name: Guard candidate identity
+    if: github.event.deleted != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      project: ${{ steps.identity.outputs.project }}
+      version: ${{ steps.identity.outputs.version }}
+      mode: ${{ steps.identity.outputs.mode }}
+      base_branch: ${{ steps.identity.outputs.base_branch }}
+      base_commit: ${{ steps.identity.outputs.base_commit }}
+      candidate_branch: ${{ steps.identity.outputs.candidate_branch }}
+      adapter: ${{ steps.identity.outputs.adapter }}
     steps:
-      - name: Require an allowed source branch
-        env:
-          REF: ${{ github.ref }}
-        run: |
-          if [[ "${REF}" != refs/heads/develop && "${REF}" != refs/heads/release/* ]]; then
-            echo "::error::Candidate must run on develop or release/*"
-            exit 1
-          fi
+      - name: Checkout candidate source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Require successful CI on this exact commit and branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml \
-            --commit "${GITHUB_SHA}" --branch "${GITHUB_REF_NAME}" \
-            --event push --status success --limit 1 \
-            --json databaseId --jq '.[0].databaseId // empty')"
-          if [[ -z "${run_id}" ]]; then
-            echo "::error::No successful CI run for ${GITHUB_SHA} on ${GITHUB_REF_NAME}."
-            exit 1
-          fi
-          echo "Validated by CI run ${run_id}; packaging ${GITHUB_SHA}."
+      - name: Project toolchain (adapter prerequisite)
+        run: rustup toolchain install stable --profile minimal
 
-  build:
-    name: Build immutable candidate archive
+      - name: Verify identity and trailers
+        id: identity
+        run: |
+          bash scripts/candidate-guard.sh --ref "${GITHUB_REF_NAME}" --commit "${GITHUB_SHA}" | tee -a "${GITHUB_OUTPUT}"
+
+  test:
+    name: Test exact candidate
     needs: guard
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - name: Checkout the exact source commit
+      - name: Checkout candidate source
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+
+      - name: Run adapter verify
+        env:
+          ADAPTER: ${{ needs.guard.outputs.adapter }}
+        run: |
+          "./${ADAPTER}" verify
+
+      - name: Release-pipeline self-tests
+        run: |
+          bash tests/pipeline/run.sh
+
+  package:
+    name: Build and package candidate
+    needs: guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact_name: ${{ steps.manifest.outputs.artifact_name }}
+      manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
+    steps:
+      - name: Checkout candidate source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Install toolchain
         run: rustup toolchain install stable --profile minimal
 
-      - name: Build
-        run: cargo build --release --locked
-
-      - name: Package reproducible archive and manifest
-        shell: bash
+      - name: Generate artifact inventory
+        env:
+          ADAPTER: ${{ needs.guard.outputs.adapter }}
+          VERSION: ${{ needs.guard.outputs.version }}
         run: |
-          set -euo pipefail
-          version="$(cargo metadata --locked --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "release-flow") | .version')"
-          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '::error::Expected stable X.Y.Z version'; exit 1; }
-          archive="release-flow-${version}-x86_64-unknown-linux-gnu.tar.gz"
-          mkdir -p dist/stage
-          cp target/release/release-flow LICENSE README.md dist/stage/
-          epoch="$(git log -1 --format=%ct)"
-          tar --sort=name --mtime="@${epoch}" --owner=0 --group=0 --numeric-owner \
-            -C dist/stage -cf - . | gzip -n > "dist/${archive}"
-          (cd dist && sha256sum "${archive}" > SHA256SUMS)
-          lock_sha256="$(sha256sum Cargo.lock | awk '{print $1}')"
-          rust_version="$(rustc --version)"
-          jq -n --arg version "${version}" --arg commit "${GITHUB_SHA}" \
-            --arg archive "${archive}" --arg lock_sha256 "${lock_sha256}" \
-            --arg rustc "${rust_version}" \
-            '{version: $version, commit: $commit, archive: $archive,
-              cargo_lock_sha256: $lock_sha256, rustc: $rustc}' > dist/manifest.json
-          rm -rf dist/stage
-          bash scripts/verify-candidate.sh dist "${GITHUB_SHA}"
+          "./${ADAPTER}" inventory "${VERSION}" > "${RUNNER_TEMP}/inventory.json"
 
-      - name: Upload candidate files (not a public release)
+      - name: Package artifacts
+        env:
+          ADAPTER: ${{ needs.guard.outputs.adapter }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          epoch="$(git log -1 --format=%ct)"
+          echo "SOURCE_DATE_EPOCH=${epoch}" >> "${GITHUB_ENV}"
+          SOURCE_DATE_EPOCH="${epoch}" "./${ADAPTER}" package "${VERSION}" dist
+
+      - name: Generate artifact manifest
+        id: manifest
+        env:
+          ADAPTER: ${{ needs.guard.outputs.adapter }}
+          PROJECT: ${{ needs.guard.outputs.project }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          MODE: ${{ needs.guard.outputs.mode }}
+          BASE_BRANCH: ${{ needs.guard.outputs.base_branch }}
+          BASE_COMMIT: ${{ needs.guard.outputs.base_commit }}
+          CANDIDATE_BRANCH: ${{ needs.guard.outputs.candidate_branch }}
+        run: |
+          manifest_sha="$(bash scripts/candidate-manifest.sh \
+            --dir dist \
+            --inventory "${RUNNER_TEMP}/inventory.json" \
+            --project "${PROJECT}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --version "${VERSION}" \
+            --mode "${MODE}" \
+            --base-branch "${BASE_BRANCH}" \
+            --base-commit "${BASE_COMMIT}" \
+            --candidate-branch "${CANDIDATE_BRANCH}" \
+            --candidate-commit "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+            --adapter "${ADAPTER}")"
+          echo "manifest_sha256=${manifest_sha}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_name=candidate-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+
+      - name: Self-verify candidate directory before upload
+        env:
+          MANIFEST_SHA256: ${{ steps.manifest.outputs.manifest_sha256 }}
+        run: |
+          bash scripts/verify-candidate.sh \
+            --dir dist \
+            --commit "${GITHUB_SHA}" \
+            --manifest-sha256 "${MANIFEST_SHA256}"
+
+      - name: Upload candidate artifacts (not a public release)
         uses: actions/upload-artifact@v7
         with:
-          name: candidate-${{ github.sha }}
-          path: dist/*
+          name: ${{ steps.manifest.outputs.artifact_name }}
+          path: dist/
           if-no-files-found: error
           retention-days: 90
 
   verify:
-    name: Verify uploaded candidate
-    needs: build
-    runs-on: ubuntu-latest
+    name: Verify downloaded candidate
+    needs: [guard, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout verifier
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Download exactly this candidate
+      - name: Download candidate artifacts
         uses: actions/download-artifact@v8
         with:
-          name: candidate-${{ github.sha }}
+          name: ${{ needs.package.outputs.artifact_name }}
           path: candidate
 
-      - name: Verify checksum and source identity
-        run: bash scripts/verify-candidate.sh candidate "${GITHUB_SHA}"
+      - name: Verify checksums, manifest and source identity
+        env:
+          PROJECT: ${{ needs.guard.outputs.project }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          MODE: ${{ needs.guard.outputs.mode }}
+          BASE_COMMIT: ${{ needs.guard.outputs.base_commit }}
+          MANIFEST_SHA256: ${{ needs.package.outputs.manifest_sha256 }}
+        run: |
+          bash scripts/verify-candidate.sh \
+            --dir candidate \
+            --commit "${GITHUB_SHA}" \
+            --version "${VERSION}" \
+            --mode "${MODE}" \
+            --base-commit "${BASE_COMMIT}" \
+            --project "${PROJECT}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --manifest-sha256 "${MANIFEST_SHA256}"
+
+  report:
+    name: Candidate OK
+    if: always()
+    needs: [guard, test, package, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Summarize candidate validation
+        env:
+          GUARD_RES: ${{ needs.guard.result }}
+          TEST_RES: ${{ needs.test.result }}
+          PKG_RES: ${{ needs.package.result }}
+          VERIFY_RES: ${{ needs.verify.result }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          MODE: ${{ needs.guard.outputs.mode }}
+          COMMIT: ${{ github.sha }}
+          MANIFEST_SHA: ${{ needs.package.outputs.manifest_sha256 }}
+        run: |
+          cat <<EOF >> "${GITHUB_STEP_SUMMARY}"
+          # Release Candidate Validation Report
+
+          | Property | Value |
+          | --- | --- |
+          | Version | ${VERSION:-unknown} |
+          | Mode | ${MODE:-unknown} |
+          | Candidate Commit | \`${COMMIT}\` |
+          | Manifest SHA256 | \`${MANIFEST_SHA:-unknown}\` |
+          | Guard | ${GUARD_RES} |
+          | Tests & Checks | ${TEST_RES} |
+          | Build & Package | ${PKG_RES} |
+          | Artifact Verification | ${VERIFY_RES} |
+
+          EOF
+
+          if [[ "${GUARD_RES}" == "success" && "${TEST_RES}" == "success" && \
+                "${PKG_RES}" == "success" && "${VERIFY_RES}" == "success" ]]; then
+            if [[ "${MODE}" == "test-only" ]]; then
+              echo "::notice::TEST-ONLY candidate validated. This candidate is not promotable to production."
+            else
+              echo "::notice::Production release candidate VALIDATED for commit ${COMMIT}."
+            fi
+            exit 0
+          else
+            echo "::error::Release candidate validation failed."
+            exit 1
+          fi

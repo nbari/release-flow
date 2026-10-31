@@ -9,8 +9,7 @@
 
 `release-flow` is a practical reference project for building software releases that are **validated before promotion**, **promoted without partial Git ref updates**, and **published through independently retryable channels**. Its Rust CLI is useful for inspecting release readiness; the **release pipeline is the primary project**. The project will eventually release its own binary using the process described here, then serve as a reusable pattern for other repositories.
 
-> **Status: bootstrap / design in progress.** The Rust CLI (`status`, `plan`, `check`), CI, and a basic candidate artifact verifier exist. Versioned release preparation, atomic promotion, immutable tags, independent publishing, and recovery commands are **not implemented yet**. Workflow badges report GitHub Actions results, **not** end-to-end release health.
-
+> **Status: Milestone 1 implemented.** The Rust CLI (`status`, `plan`, `check`), isolated worktree candidate preparation, language-agnostic project adapter, candidate validation pipeline, and independent manifest verification are implemented and tested. Atomic promotion (Milestone 2) and independent publishing (Milestone 3) remain planned.
 ## The release contract
 
 1. **One release = one version + one exact source commit + one verified artifact inventory.** Branch names and "latest" are never sufficient release identities.
@@ -205,23 +204,39 @@ just build
 - `check` evaluates release eligibility and fails closed when required evidence is missing. `--local-only` limits the checks to local evidence; it is **not** a substitute for authoritative remote CI verification.
 - `--json` is intended for CI consumers; automation should inspect both the structured verdict and process exit code.
 
-The [CI workflow](.github/workflows/ci.yml) runs formatting, Clippy, unit tests, candidate verifier failure tests, binary compilation and CLI smoke checks. The [Candidate workflow](.github/workflows/candidate.yml) currently checks for CI on the exact SHA, creates one Linux archive and checksum manifest, then downloads and re-verifies that artifact. **It does not perform the complete release protocol above.**
+The [CI workflow](.github/workflows/ci.yml) runs formatting, Clippy, unit and integration tests, candidate failure tests, and CLI checks.
 
-The candidate workflow is currently `workflow_dispatch`-only and must exist on GitHub's **default branch** before manual dispatch is enabled. With `main` still at the initial bootstrap commit, dispatch cannot yet be used normally. Avoid adding throwaway release tags merely to test this workflow.
+The [Candidate workflow](.github/workflows/candidate.yml) is triggered automatically on push to temporary `release/**` branches. It enforces exact candidate identity and trailers via `scripts/candidate-guard.sh`, executes project tests and packaging via the adapter, generates an immutable `manifest.json` with `SHA256SUMS`, uploads the artifacts, and downloads them in an isolated verification job to confirm inventory and checksums.
+
+### Preparing a candidate
+
+Candidates are prepared in an isolated Git worktree without modifying `develop`, `sandbox`, `main`, or your active checkout:
+
+```sh
+# Prepare a production candidate from develop:
+just release-prepare patch
+just release-prepare minor
+just release-prepare major
+
+# Prepare and push a test-only candidate based on sandbox:
+just release-prepare patch --mode test-only --push
+```
+
+See [ADOPTION.md](docs/ADOPTION.md) for details on the adapter interface and adopting `release-flow` in other projects.
 
 ## Implementation progress
 
 | Milestone | Status | Exit criterion |
 | --- | --- | --- |
 | Read-only `status` / `plan` / `check` CLI | **Implemented** | Green [sandbox CI](https://github.com/nbari/release-flow/actions/workflows/ci.yml?query=branch%3Asandbox) |
-| Basic CI and candidate archive verification | **Implemented** | Expand to authoritative matrix, verified immutable inventory |
-| Bootstrap workflows on default branch | **Pending** | Candidate can be safely dispatched without a release |
-| Worktree + versioned temporary candidate | **Planned** | Version changes isolated; no production ref changes |
+| Worktree + versioned temporary candidate | **Implemented** | Isolated worktree preparation; no production ref changes |
+| Reusable adapter contract & Cargo reference | **Implemented** | Project-independent adapter protocol v1 |
+| Exact-SHA candidate pipeline & manifest v1 | **Implemented** | Same-run verification; pinned manifest hash; independent verifier |
+| Pipeline failure-injection test suite | **Implemented** | All 4 test suites pass in `just check` |
 | Atomic exact-SHA promotion + signed tag + rulesets | **Planned** | Race/stale-branch/partial-push tests pass |
 | Durable manifest + independent publishers | **Planned** | Retry one publisher without rebuilding or retagging |
 | Complete recovery / fault-injection suite | **Planned** | All failure scenarios demonstrated end-to-end |
 | Dogfood a real release of `release-flow` | **Planned** | Self-release can recover interrupted publishers |
-
 **Source of truth:** This README states the intended release contract. [Release design](docs/RELEASE_DESIGN.md) expands the invariants and failure cases; [AGENTS.md](AGENTS.md) covers contributor/agent guidelines. **Do not mistake planned capabilities for working commands.**
 
 Licensed under [BSD-3-Clause](LICENSE).

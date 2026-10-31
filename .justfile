@@ -15,7 +15,7 @@ check:
     cargo fmt --all -- --check
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     cargo test --locked --workspace --all-features
-    bash tests/candidate-verification.sh
+    bash tests/pipeline/run.sh
 
 build:
     cargo build --release --locked
@@ -24,9 +24,13 @@ build:
 status:
     cargo run --locked -- status
 
-# Manually dispatch the candidate pipeline on the current branch.
-candidate:
-    gh workflow run candidate.yml --ref "$(git branch --show-current)"
+# Prepare an isolated, versioned candidate commit in a temporary worktree.
+release-prepare bump *flags:
+    bash scripts/release-prepare.sh "{{ bump }}" {{ flags }}
+
+# Run release pipeline failure-injection test suite.
+pipeline-test:
+    bash tests/pipeline/run.sh
 
 # Ensure working tree has no uncommitted changes.
 check-clean:

@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [develop, main]
   push:
-    branches: [main, develop, sandbox, 'release/**']
+    branches: [main, develop, sandbox]
   workflow_dispatch:
 
 concurrency:
@@ -40,8 +40,8 @@ jobs:
       - name: Tests
         run: cargo test --locked --workspace --all-features
 
-      - name: Candidate failure tests
-        run: bash tests/candidate-verification.sh
+      - name: Release-pipeline failure tests
+        run: bash tests/pipeline/run.sh
 
       - name: Build release binary
         run: cargo build --release --locked
