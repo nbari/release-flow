@@ -14,9 +14,12 @@ concurrency:
 permissions:
   contents: read
 
+# A production promotion pushes the already-validated candidate commit to main
+# and develop; candidate.yml validated that exact SHA, so it is not re-verified.
 jobs:
   verify:
     name: Rust and pipeline verification
+    if: "${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: ') && contains(github.event.head_commit.message, 'Release-Mode: production')) }}"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -57,7 +60,7 @@ jobs:
 
   ci-ok:
     name: CI OK
-    if: always()
+    if: "${{ always() && !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: ') && contains(github.event.head_commit.message, 'Release-Mode: production')) }}"
     needs: verify
     runs-on: ubuntu-latest
     steps:

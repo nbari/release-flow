@@ -11,11 +11,16 @@ on:
 permissions:
   contents: read
 
+# A production promotion pushes the already-validated candidate commit to main
+# and develop; it is not rebuilt or retested here (candidate.yml validated that
+# exact SHA).
 jobs:
   test:
+    if: "${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: ') && contains(github.event.head_commit.message, 'Release-Mode: production')) }}"
     uses: ./.github/workflows/test.yml
 
   coverage:
+    if: "${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: ') && contains(github.event.head_commit.message, 'Release-Mode: production')) }}"
     uses: ./.github/workflows/coverage.yml
     secrets: inherit
 
@@ -66,10 +71,10 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-  # Aggregate check for branch protection
-  ci-ok:
-    name: CI OK
-    if: always()
+  # Aggregate check for branch protection ("CI OK" is ci.yml's aggregate)
+  build-ok:
+    name: Build OK
+    if: "${{ always() && !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: ') && contains(github.event.head_commit.message, 'Release-Mode: production')) }}"
     needs:
       - test
       - coverage

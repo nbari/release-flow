@@ -1,0 +1,262 @@
+name: Publish
+
+# One job per channel and no `needs:` anywhere: every publisher resolves and
+# verifies the signed tag and the stored bytes on its own, so a failing channel
+# never blocks another. Recovery re-dispatches a single channel with current
+# publisher code against the same tag and bytes (`just release-retry`).
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Promoted release version (X.Y.Z)
+        required: true
+        type: string
+      channel:
+        description: Channel to (re)publish
+        required: true
+        type: choice
+        options: [github-release, oci, crates-io, docs, helm]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+  RELEASE_FLOW_STORAGE_URI: ${{ vars.RELEASE_FLOW_STORAGE_URI }}
+  RELEASE_FLOW_AWS_ROLE_ARN: ${{ vars.RELEASE_FLOW_AWS_ROLE_ARN }}
+
+jobs:
+  github-release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' || inputs.channel == 'github-release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: publish-github-release
+    concurrency:
+      group: publish-github-release-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout publisher code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Storage credentials
+        env:
+          RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
+          RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
+        run: bash scripts/storage/ci-credentials.sh
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
+        run: |
+          rc=0
+          bash scripts/publication/publish.sh --version "${VERSION}" --channel github-release || rc=$?
+          if (( rc == 7 )); then echo "::notice::github-release is not configured; skipped"; exit 0; fi
+          exit "${rc}"
+
+  oci:
+    name: Publish OCI image
+    if: github.event_name == 'push' || inputs.channel == 'oci'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: publish-oci
+    concurrency:
+      group: publish-oci-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout publisher code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Storage credentials
+        env:
+          RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
+          RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
+        run: bash scripts/storage/ci-credentials.sh
+
+      - name: Install ORAS (pinned, checksum-verified)
+        run: bash scripts/publication/ci-install-oras.sh
+
+      - name: Registry login
+        env:
+          OCI_USERNAME: ${{ secrets.OCI_USERNAME }}
+          OCI_PASSWORD: ${{ secrets.OCI_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          repository="$(jq -r '.publishers.oci.repository // empty' .release-flow.json)"
+          if [[ -z "${repository}" ]]; then
+            echo "::notice::oci is not configured; nothing to log in to"
+            exit 0
+          fi
+          registry="${repository%%/*}"
+          if [[ -n "${OCI_USERNAME}" && -n "${OCI_PASSWORD}" ]]; then
+            printf '%s' "${OCI_PASSWORD}" | oras login "${registry}" --username "${OCI_USERNAME}" --password-stdin
+          elif [[ "${registry}" == "ghcr.io" ]]; then
+            printf '%s' "${GH_TOKEN}" | oras login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          else
+            echo "::error::Set OCI_USERNAME and OCI_PASSWORD in the publish-oci environment for ${registry}"
+            exit 1
+          fi
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
+        run: |
+          rc=0
+          bash scripts/publication/publish.sh --version "${VERSION}" --channel oci || rc=$?
+          if (( rc == 7 )); then echo "::notice::oci is not configured; skipped"; exit 0; fi
+          exit "${rc}"
+
+  crates-io:
+    name: Publish to crates.io
+    if: github.event_name == 'push' || inputs.channel == 'crates-io'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: publish-crates-io
+    concurrency:
+      group: publish-crates-io-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout publisher code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Storage credentials
+        env:
+          RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
+          RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
+        run: bash scripts/storage/ci-credentials.sh
+
+      # crates-io.sh repackages with `cargo +<version>` recorded in the
+      # manifest (build_info.tools.cargo), so exactly that toolchain must be
+      # present. The manifest comes from the verified signed tag and stored
+      # bytes (resolve.sh); a resolve failure is left to the Publish step,
+      # which records it in the ledger.
+      - name: Install the manifest-pinned toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
+        run: |
+          if [[ -z "$(jq -r '.publishers["crates-io"] // empty' .release-flow.json)" ]]; then
+            echo "::notice::crates-io is not configured; no toolchain needed"
+            exit 0
+          fi
+          toolchain=""
+          if bash scripts/publication/resolve.sh --version "${VERSION}" --out "${RUNNER_TEMP}/rf-toolchain" >/dev/null; then
+            toolchain="$(jq -r '.build_info.tools.cargo // empty' "${RUNNER_TEMP}/rf-toolchain/artifacts/manifest.json" \
+              | sed -n 's/^cargo \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+          fi
+          rm -rf "${RUNNER_TEMP}/rf-toolchain"
+          if [[ -n "${toolchain}" ]]; then
+            echo "Installing the manifest-pinned toolchain ${toolchain}"
+            rustup toolchain install "${toolchain}" --profile minimal
+          else
+            rustup toolchain install stable --profile minimal
+          fi
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          rc=0
+          bash scripts/publication/publish.sh --version "${VERSION}" --channel crates-io || rc=$?
+          if (( rc == 7 )); then echo "::notice::crates-io is not configured; skipped"; exit 0; fi
+          exit "${rc}"
+
+  docs:
+    name: Publish documentation
+    if: github.event_name == 'push' || inputs.channel == 'docs'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: publish-docs
+    concurrency:
+      group: publish-docs-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout publisher code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Storage credentials
+        env:
+          RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
+          RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
+        run: bash scripts/storage/ci-credentials.sh
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
+        run: |
+          rc=0
+          bash scripts/publication/publish.sh --version "${VERSION}" --channel docs || rc=$?
+          if (( rc == 7 )); then echo "::notice::docs is not configured; skipped"; exit 0; fi
+          exit "${rc}"
+
+  helm:
+    name: Publish Helm chart
+    if: github.event_name == 'push' || inputs.channel == 'helm'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: publish-helm
+    concurrency:
+      group: publish-helm-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout publisher code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Storage credentials
+        env:
+          RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
+          RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
+        run: bash scripts/storage/ci-credentials.sh
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
+        run: |
+          rc=0
+          bash scripts/publication/publish.sh --version "${VERSION}" --channel helm || rc=$?
+          if (( rc == 7 )); then echo "::notice::helm is not configured; skipped"; exit 0; fi
+          exit "${rc}"

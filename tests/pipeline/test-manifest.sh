@@ -213,4 +213,60 @@ t_run bash "${ROOT}/scripts/candidate-manifest.sh" \
   --run-id "100" --run-attempt 1 --source-date-epoch 1700000000 --adapter "tools/adapter.sh"
 assert_rc 1 "M9: manifest generator caught extra stray packaged file"
 
+t_case "M10: Multi-target packaging and the candidate matrix"
+s10="${TF_TMP}/s10"
+mkdir -p "${s10}/tools"
+printf '0.1.0\n' > "${s10}/VERSION"
+cp "${ROOT}/tests/pipeline/fixtures/stub-adapter.sh" "${s10}/tools/adapter.sh"
+chmod +x "${s10}/tools/adapter.sh"
+pushd "${s10}" >/dev/null
+export STUB_TARGETS="linux-x64 macos-arm64"
+./tools/adapter.sh inventory 0.1.0 > "${TF_TMP}/inv10.json"
+for t in ${STUB_TARGETS}; do
+  RELEASE_FLOW_TARGET="${t}" t_run ./tools/adapter.sh package 0.1.0 "${TF_TMP}/m10-part-${t}"
+  assert_rc 0 "M10: ${t} leg packages"
+  assert_eq "stub-0.1.0-${t}.txt" "$(ls "${TF_TMP}/m10-part-${t}")" "M10: ${t} leg packages only its own artifact"
+done
+mkdir -p "${TF_TMP}/m10-dist" "${TF_TMP}/m10-dist-missing"
+cp "${TF_TMP}"/m10-part-*/* "${TF_TMP}/m10-dist/"
+cp "${TF_TMP}/m10-part-linux-x64"/* "${TF_TMP}/m10-dist-missing/"
+m10_manifest() {
+  t_run bash "${ROOT}/scripts/candidate-manifest.sh" \
+    --dir "$1" --inventory "${TF_TMP}/inv10.json" \
+    --project "demo" --repository "example/demo" \
+    --version "0.1.0" --mode "production" \
+    --base-branch "develop" --base-commit "${BASE}" \
+    --candidate-branch "release/0.1.0-000000000000" --candidate-commit "${COMMIT}" \
+    --run-id "100" --run-attempt 1 --source-date-epoch 1700000000 --adapter "tools/adapter.sh"
+}
+m10_manifest "${TF_TMP}/m10-dist"
+assert_rc 0 "M10: the union of the target legs equals the inventory"
+assert_eq "linux-x64 macos-arm64" "$(jq -r '[.artifacts[].target] | join(" ")' "${TF_TMP}/m10-dist/manifest.json")" "M10: manifest records each target"
+m10_manifest "${TF_TMP}/m10-dist-missing"
+assert_rc 1 "M10: a missing target leg is rejected"
+assert_contains "${T_ERR}" "Missing artifact file(s): stub-0.1.0-macos-arm64.txt" "M10: names the missing leg's artifact"
+
+t_run bash "${ROOT}/scripts/candidate-targets.sh" --adapter tools/adapter.sh
+assert_rc 0 "M10: candidate-targets accepts the adapter targets"
+assert_eq '{"include":[{"target":"linux-x64","runner":"ubuntu-24.04"},{"target":"macos-arm64","runner":"ubuntu-24.04"}]}' "${T_OUT}" "M10: matrix lists every target"
+unset STUB_TARGETS
+t_run bash "${ROOT}/scripts/candidate-targets.sh" --adapter tools/adapter.sh
+assert_rc 0 "M10: adapter without targets support"
+assert_eq '{"include":[{"target":"","runner":"ubuntu-24.04"}]}' "${T_OUT}" "M10: unsupported targets fall back to one leg"
+cat <<'EOF' > tools/custom.sh
+#!/usr/bin/env bash
+[[ "$1" == "targets" ]] || exit 2
+[[ -z "${CUSTOM_FAIL:-}" ]] || exit 1
+printf '%s\n' "${CUSTOM_TARGETS}"
+EOF
+chmod +x tools/custom.sh
+for bad in 'not json' '[]' '[{"target":"a","runner":"r"},{"target":"a","runner":"r"}]' '[{"target":"a b","runner":"r"}]' '[{"target":"a","runner":"r","extra":1}]'; do
+  CUSTOM_TARGETS="${bad}" t_run bash "${ROOT}/scripts/candidate-targets.sh" --adapter tools/custom.sh
+  assert_rc 1 "M10: invalid targets '${bad}' rejected"
+done
+assert_contains "$(CUSTOM_TARGETS='[{"target":"a","runner":"r"},{"target":"a","runner":"r"}]' bash "${ROOT}/scripts/candidate-targets.sh" --adapter tools/custom.sh 2>&1 || true)" "duplicate target: a" "M10: names the duplicate target"
+CUSTOM_FAIL=1 t_run bash "${ROOT}/scripts/candidate-targets.sh" --adapter tools/custom.sh
+assert_rc 1 "M10: failing adapter targets is an error"
+popd >/dev/null
+
 t_finish

@@ -67,4 +67,22 @@ cd "${crate_dir}"
   assert_contains "${tar_contents}" "LICENSE" "C1: archive contains LICENSE"
 cd "${orig_pwd}"
 
+t_case "C2: Cargo adapter targets and per-target inventory"
+cd "${crate_dir}"
+  unset RELEASE_FLOW_CARGO_TARGETS
+  t_run bash "${adapter}" targets
+  assert_rc 2 "C2: targets unsupported without RELEASE_FLOW_CARGO_TARGETS"
+  export RELEASE_FLOW_CARGO_TARGETS="x86_64-unknown-linux-musl:ubuntu-24.04 x86_64-pc-windows-msvc:windows-latest aarch64-apple-darwin"
+  t_run bash "${adapter}" targets
+  assert_rc 0 "C2: targets listed"
+  assert_eq '[{"target":"x86_64-unknown-linux-musl","runner":"ubuntu-24.04"},{"target":"x86_64-pc-windows-msvc","runner":"windows-latest"},{"target":"aarch64-apple-darwin","runner":"ubuntu-24.04"}]' "${T_OUT}" "C2: targets with runners (default ubuntu-24.04)"
+  t_run bash "${ROOT}/scripts/candidate-targets.sh" --adapter "${adapter}"
+  assert_rc 0 "C2: candidate-targets accepts the cargo targets"
+  t_run bash "${adapter}" inventory "0.2.0"
+  assert_rc 0 "C2: inventory succeeds"
+  assert_eq "demo-app-0.2.0-x86_64-unknown-linux-musl.tar.gz:x86_64-unknown-linux-musl demo-app-0.2.0-x86_64-pc-windows-msvc.tar.gz:x86_64-pc-windows-msvc demo-app-0.2.0-aarch64-apple-darwin.tar.gz:aarch64-apple-darwin" \
+    "$(printf '%s' "${T_OUT}" | jq -r '[.artifacts[] | .name + ":" + .target] | join(" ")')" "C2: one artifact per configured target"
+  unset RELEASE_FLOW_CARGO_TARGETS
+cd "${orig_pwd}"
+
 t_finish

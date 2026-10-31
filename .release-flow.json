@@ -4,5 +4,26 @@
   "adapter": "scripts/adapters/release-flow.sh",
   "remote": "origin",
   "production_base": "develop",
-  "test_base": "sandbox"
+  "test_base": "sandbox",
+  "repository": "nbari/release-flow",
+  "promotion": {
+    "main_branch": "main",
+    "push_remote": "origin",
+    "candidate_workflow": ".github/workflows/candidate.yml",
+    "required_job": "Candidate OK",
+    "signature_verification": "github",
+    "publisher_ref": "main"
+  },
+  "publishers": {
+    "github-release": {
+      "required": true,
+      "assets": ["*"]
+    },
+    "crates-io": {
+      "required": true,
+      "artifact": "{project}-{version}.crate",
+      "package": "release-flow",
+      "index_url": "https://index.crates.io"
+    }
+  }
 }

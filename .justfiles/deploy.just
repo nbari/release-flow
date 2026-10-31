@@ -18,3 +18,20 @@ deploy-minor:
 [group('release')]
 deploy-major:
     @{{ release_flow_deploy }} major
+
+release_flow_scripts := parent_directory(source_directory()) / 'scripts'
+
+# Promote a validated production candidate: signed tag plus one atomic push of main, develop and the tag (--dry-run: preflight only)
+[group('release')]
+release-promote candidate commit *flags:
+    @bash {{ quote(release_flow_scripts / 'release-promote.sh') }} --project-dir {{ quote(justfile_directory()) }} --candidate {{ quote(candidate) }} --commit {{ quote(commit) }} {{ flags }}
+
+# Show the release state of a version and its publication channels (--json for machines)
+[group('release')]
+release-status version *flags:
+    @bash {{ quote(release_flow_scripts / 'release-status.sh') }} --project-dir {{ quote(justfile_directory()) }} {{ quote(version) }} {{ flags }}
+
+# Re-publish one channel of a promoted version with current publisher code (--local, --ref REF, --break-lock)
+[group('release')]
+release-retry version channel *flags:
+    @bash {{ quote(release_flow_scripts / 'release-retry.sh') }} --project-dir {{ quote(justfile_directory()) }} {{ quote(version) }} {{ quote(channel) }} {{ flags }}

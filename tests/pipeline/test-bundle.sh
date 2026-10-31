@@ -43,12 +43,46 @@ refs_of() {
 }
 
 PAYLOAD_PATHS=".github/workflows/candidate.yml
+.github/workflows/publish.yml
 .justfiles/deploy.just
 scripts/candidate-guard.sh
 scripts/candidate-manifest.sh
+scripts/candidate-targets.sh
+scripts/lib/common.sh
+scripts/lib/github.sh
+scripts/lib/schema.sh
+scripts/lib/tag.sh
+scripts/publication/ci-install-oras.sh
+scripts/publication/latest.sh
+scripts/publication/ledger.sh
+scripts/publication/publish.sh
+scripts/publication/resolve.sh
+scripts/publishers/crates-io.sh
+scripts/publishers/docs.sh
+scripts/publishers/github-release.sh
+scripts/publishers/helm.sh
+scripts/publishers/oci.sh
 scripts/release-deploy.sh
 scripts/release-prepare.sh
+scripts/release-promote.sh
+scripts/release-retry.sh
+scripts/release-status.sh
+scripts/storage/backends/fs.sh
+scripts/storage/backends/s3.sh
+scripts/storage/ci-credentials.sh
+scripts/storage/storage.sh
 scripts/verify-candidate.sh"
+PAYLOAD_COUNT=30
+SUPPORT_DOCS="docs/ADOPTION.md
+docs/RULESETS.md
+docs/release-flow.example.json
+docs/rulesets/candidates.json
+docs/rulesets/develop-integrity.json
+docs/rulesets/develop-review.json
+docs/rulesets/main-integrity.json
+docs/rulesets/main-promotion.json
+docs/rulesets/release-tags-create.json
+docs/rulesets/release-tags-immutable.json"
 
 t_case "B1: Reproducible bundle archives"
 a1="$(build_bundle 9.9.9 "${TF_TMP}/b1-a")"
@@ -64,9 +98,8 @@ t_case "B2: Bundle contents and BUNDLE.json"
 expected_files="$(printf '%s\n' \
   "release-flow-bundle-9.9.9/BUNDLE.json" \
   "release-flow-bundle-9.9.9/install.sh" \
-  "release-flow-bundle-9.9.9/docs/ADOPTION.md" \
-  "release-flow-bundle-9.9.9/docs/release-flow.example.json" \
   "release-flow-bundle-9.9.9/optional/scripts/adapters/cargo.sh" \
+  $(printf '%s\n' "${SUPPORT_DOCS}" | sed 's|^|release-flow-bundle-9.9.9/|') \
   $(printf '%s\n' "${PAYLOAD_PATHS}" | sed 's|^|release-flow-bundle-9.9.9/payload/|') | sort)"
 actual_files="$(tar -tzf "${a1}" | grep -v '/$' | sort)"
 assert_eq "${expected_files}" "${actual_files}" "B2: archive file set matches the contract"
@@ -92,7 +125,7 @@ refs_before="$(refs_of "${repo}")"
 t_run bash "${b2}/install.sh" --target "${repo}"
 assert_rc 0 "B3: install succeeds"
 assert_contains "${T_OUT}" "bundle_version=9.9.9" "B3: reports bundle version"
-assert_contains "${T_OUT}" "installed=7" "B3: installs every payload file"
+assert_contains "${T_OUT}" "installed=${PAYLOAD_COUNT}" "B3: installs every payload file"
 assert_contains "${T_ERR}" "import '.justfiles/deploy.just'" "B3: prints the import instruction"
 assert_not_contains "${T_ERR}" "release-flow.example.json" "B3: no config instruction when .release-flow.json exists"
 missing=0
@@ -109,7 +142,7 @@ assert_eq "" "$(git -C "${repo}" diff --cached --name-only)" "B3: nothing staged
 rm -f "${repo}/.release-flow.json"
 t_run bash "${b2}/install.sh" --target "${repo}"
 assert_rc 0 "B3: re-install is idempotent"
-assert_contains "${T_OUT}" "unchanged=7" "B3: re-install leaves identical files"
+assert_contains "${T_OUT}" "unchanged=${PAYLOAD_COUNT}" "B3: re-install leaves identical files"
 assert_contains "${T_ERR}" "release-flow.example.json" "B3: config instruction when .release-flow.json is missing"
 t_run bash "${b2}/install.sh" --target "${repo}/tools"
 assert_rc 2 "B3: target must be the work-tree root"
@@ -190,8 +223,20 @@ cd "${ROOT}"
 t_run "${ROOT}/scripts/adapters/release-flow.sh" inventory 9.9.9
 assert_rc 0 "B8: inventory succeeds"
 names="$(printf '%s' "${T_OUT}" | jq -r '.artifacts[].name' | tr '\n' ' ')"
-assert_contains "${names}" "release-flow-9.9.9-" "B8: lists the Cargo archive"
+assert_contains "${names}" "release-flow-9.9.9-x86_64-unknown-linux-musl.tar.gz" "B8: lists the Linux Cargo archive"
+assert_contains "${names}" "release-flow-9.9.9-x86_64-apple-darwin.tar.gz" "B8: lists the macOS Cargo archive"
+assert_contains "${names}" "release-flow-9.9.9-x86_64-pc-windows-msvc.tar.gz" "B8: lists the Windows Cargo archive"
 assert_contains "${names}" "release-flow-bundle-9.9.9.tar.gz" "B8: lists the bundle archive"
+assert_contains "${names}" "release-flow-9.9.9.crate" "B8: lists the crate package"
+t_run "${ROOT}/scripts/adapters/release-flow.sh" targets
+assert_rc 0 "B8: targets succeeds"
+assert_eq "x86_64-unknown-linux-musl:ubuntu-24.04 x86_64-apple-darwin:macos-latest x86_64-pc-windows-msvc:windows-latest any:ubuntu-24.04" \
+  "$(printf '%s' "${T_OUT}" | jq -r 'map(.target + ":" + .runner) | join(" ")')" "B8: one matrix leg per platform plus the any leg"
+t_run bash "${ROOT}/scripts/candidate-targets.sh" --adapter scripts/adapters/release-flow.sh
+assert_rc 0 "B8: candidate-targets accepts the release-flow targets"
+RELEASE_FLOW_TARGETS="any" t_run "${ROOT}/scripts/adapters/release-flow.sh" inventory 9.9.9
+assert_eq "release-flow-bundle-9.9.9.tar.gz:any release-flow-9.9.9.crate:any" \
+  "$(printf '%s' "${T_OUT}" | jq -r '[.artifacts[] | .name + ":" + .target] | join(" ")')" "B8: RELEASE_FLOW_TARGETS filters the inventory"
 t_run "${ROOT}/scripts/adapters/release-flow.sh" bogus
 assert_rc 2 "B8: unknown subcommand is a usage error"
 cd "${orig_dir}"
@@ -201,7 +246,7 @@ repo="$(tf_fixture_repo "bundle-cargo")"
 lock="${repo}/.release-flow-bundle.json"
 t_run bash "${b2}/install.sh" --target "${repo}" --with-cargo-adapter
 assert_rc 0 "B9: --with-cargo-adapter install succeeds"
-assert_contains "${T_OUT}" "installed=8" "B9: installs payload plus the cargo adapter"
+assert_contains "${T_OUT}" "installed=$(( PAYLOAD_COUNT + 1 ))" "B9: installs payload plus the cargo adapter"
 assert_eq "$(file_sha "${b2}/optional/scripts/adapters/cargo.sh")" "$(file_sha "${repo}/scripts/adapters/cargo.sh")" "B9: cargo adapter content installed"
 assert_eq "present" "$( [[ -x "${repo}/scripts/adapters/cargo.sh" ]] && echo present || echo absent)" "B9: cargo adapter executable"
 assert_eq "$(jq -r '.optional[] | select(.path == "scripts/adapters/cargo.sh") | .sha256' "${b2}/BUNDLE.json")" \
@@ -213,7 +258,7 @@ assert_eq "scripts/adapters/cargo.sh" "$(jq -r '.files[] | select(.path == "scri
 assert_eq "9.9.10" "$(jq -r .bundle_version "${lock}")" "B9: lock upgraded"
 t_run bash "${b5}/install.sh" --target "${repo}" --check
 assert_rc 0 "B9: --check passes after upgrade"
-assert_contains "${T_OUT}" "checked=7" "B9: --check covers the cargo adapter"
+assert_contains "${T_OUT}" "checked=${PAYLOAD_COUNT}" "B9: --check covers the cargo adapter (payload minus the file 9.9.10 dropped)"
 
 t_case "B10: Symlinked or non-regular destinations"
 repo="$(tf_fixture_repo "bundle-symlink-parent")"
@@ -274,9 +319,7 @@ done
 t_case "B11: release-flow adapter package builds the Cargo archive and the bundle"
 src="${TF_TMP}/b11-src"
 for f in scripts/adapters/release-flow.sh scripts/adapters/cargo.sh scripts/release-flow-bundle.sh \
-  scripts/release-flow-install.sh .justfiles/deploy.just scripts/release-deploy.sh scripts/release-prepare.sh \
-  scripts/candidate-guard.sh scripts/candidate-manifest.sh scripts/verify-candidate.sh \
-  .github/workflows/candidate.yml docs/ADOPTION.md docs/release-flow.example.json; do
+  scripts/release-flow-install.sh ${PAYLOAD_PATHS} ${SUPPORT_DOCS}; do
   mkdir -p "$(dirname "${src}/${f}")"
   cp -p "${ROOT}/${f}" "${src}/${f}"
 done
@@ -299,9 +342,18 @@ git init --quiet
 git add .
 git commit -m "B11 source" --quiet
 dist="${TF_TMP}/b11-dist"
+host_target="$(rustc -vV | awk '/^host:/ {print $2}')"
+export RELEASE_FLOW_CARGO_TARGETS="${host_target}"
 SOURCE_DATE_EPOCH=1700000000 t_run "${src}/scripts/adapters/release-flow.sh" package 0.3.0 "${dist}"
 assert_rc 0 "B11: package succeeds"
 expected_names="$("${src}/scripts/adapters/release-flow.sh" inventory 0.3.0 | jq -r '.artifacts[].name' | sort)"
+assert_contains "${expected_names}" "demo-app-0.3.0-${host_target}.tar.gz" "B11: Cargo archive for the configured target"
+assert_contains "${expected_names}" "demo-app-0.3.0.crate" "B11: crate package is an inventory artifact"
+assert_eq "demo-app-0.3.0/Cargo.toml" "$(tar -tzf "${dist}/demo-app-0.3.0.crate" 2>/dev/null | grep -x 'demo-app-0.3.0/Cargo.toml' || true)" "B11: crate package holds the manifest"
+rm -rf "${TF_TMP}/b11-any"
+RELEASE_FLOW_TARGET=any SOURCE_DATE_EPOCH=1700000000 t_run "${src}/scripts/adapters/release-flow.sh" package 0.3.0 "${TF_TMP}/b11-any"
+assert_rc 0 "B11: the any leg packages"
+assert_eq "demo-app-0.3.0.crate release-flow-bundle-0.3.0.tar.gz" "$(ls "${TF_TMP}/b11-any" | sort | tr '\n' ' ' | sed 's/ $//')" "B11: the any leg builds only platform-independent artifacts"
 assert_eq "${expected_names}" "$(ls "${dist}" | sort)" "B11: package produces exactly the inventory artifacts"
 assert_contains "${expected_names}" "release-flow-bundle-0.3.0.tar.gz" "B11: bundle is an inventory artifact"
 b11="$(extract_bundle "${dist}/release-flow-bundle-0.3.0.tar.gz" "${TF_TMP}/b11-x")"
@@ -311,6 +363,7 @@ t_run "${src}/scripts/adapters/release-flow.sh" package 0.3.0
 assert_rc 2 "B11: missing outdir is a usage error"
 SOURCE_DATE_EPOCH=1700000000 t_run "${src}/scripts/adapters/release-flow.sh" package 0.3.0 "${dist}"
 assert_rc 1 "B11: refuses a non-empty output directory"
+unset RELEASE_FLOW_CARGO_TARGETS
 cd "${orig_dir}"
 
 t_case "B12: Malformed BUNDLE.json"

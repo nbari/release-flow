@@ -39,3 +39,46 @@ For immutable GitHub Releases, stage assets in a draft, verify the complete chec
 - Base integration branches (`develop` or `sandbox`) and local checkouts remain completely untouched.
 - Pushing the candidate branch (`release/**`) triggers `.github/workflows/candidate.yml`, which verifies candidate identity in `guard`, executes project tests and packaging in the same run, writes a versioned `manifest.json` (v1) and `SHA256SUMS`, and downloads and independently verifies the artifacts.
 - See [ADOPTION.md](ADOPTION.md) for the Adapter Protocol v1 and adoption guide.
+## Milestone 2: Guarded atomic promotion
+
+`PROMOTED` is implemented by `just release-promote <candidate> <sha>` (`scripts/release-promote.sh`). It runs locally with the release operator's credentials (the repository's single write deploy key, configured as `promotion.push_remote`), because pushes made with `GITHUB_TOKEN` do not start workflows and the tag push must start `publish.yml`.
+
+**Decide (PF01–PF20, read-only).** Tools; configuration (`repository`, `promotion`); an exclusive local lock; a fresh remote snapshot (with an already-promoted fast path); a production `release/X.Y.Z-<base12>` branch (test-only candidates are never promotable); the `--commit` pin equals the remote branch tip; production trailers; exactly one parent equal to `Release-Base-Commit`; the candidate edits no release tooling (`.github/`, `.justfiles/`, `scripts/`, the config, the adapter, bundle-locked paths), after which the configuration at `C` is authoritative; the version is above every released tag and unused (an unpublished local tag is reused only when it carries exactly this candidate's evidence); `develop` still equals the base; `main` fast-forwards to `C`; the `candidate.yml` push run for `C` on that branch and repository succeeded and its latest attempt's `Candidate OK` job succeeded; the non-expired `candidate-<C>-<attempt>` artifact downloads and verifies; the durable candidate record equals it; every stored blob is present and intact (a missing blob is reported as unrecoverable, never rebuilt); signing is ready; and the server rulesets protect `main`, `develop` and release tags, with a dry-run push accepted.
+
+**Act.** `T1` creates (or reuses) the signed annotated tag whose message carries strict trailers (`Release-Project`, `-Repository`, `-Version`, `-Commit`, `-Base-Commit`, `-Candidate-Branch`, `-Candidate-Run`, `-Candidate-Run-Attempt`, `-Manifest-SHA256`, `-SHA256SUMS-SHA256`, `-Storage`). `T2` re-reads the remote and stops if anything moved. `T3` is the only write: one `git push --atomic` of `C:main`, `C:develop` and the tag, fast-forward and create-only, never forced.
+
+**Reconcile.** `T4` always re-reads the remote (with backoff), whatever the push reported:
+
+| Remote tag | `main` / `develop` | Verdict | Exit |
+| --- | --- | --- | --- |
+| absent | unchanged | `NOT_PROMOTED`; the local tag is kept and reused on rerun | 10 |
+| absent | moved | `STALE`; prepare a new candidate | 3 |
+| our tag → `C` | contain `C` | `PROMOTED` (`reconciled=true` when the push reported failure) | 0 |
+| another valid signed tag → `C`, same manifest | contain `C` | `PROMOTED_BY_OTHER` | 0 |
+| → another commit or manifest | any | `CONFLICT` | 12 |
+| → `C` | lack `C` | `INCONSISTENT` (manual; never auto-fixed) | 13 |
+| unreachable | — | `UNKNOWN`; rerun reconciles before pushing | 11 |
+
+`T5` (signature mode `github`) requires GitHub to report the tag verified (exit 14 otherwise: the refs are promoted but publishers refuse the tag until the key is registered).
+
+## Milestone 3: Durable storage and independent publication
+
+**Storage** (`scripts/storage/`, `file:///` or `s3://` with conditional writes) is content-addressed and create-only: `blobs/sha256/..` (artifacts, `manifest.json`, `SHA256SUMS`), `candidates/<P>/<C>/<run>-<attempt>.json` (written only by the `candidate.yml` `retain` job), `releases/<P>/<V>.json` (the release binding), the append-only `ledger/` of publication events, `locks/` and `latest` pointers updated by compare-and-swap. Every record has an exact JSON schema (`scripts/lib/schema.sh`); nothing is ever sourced as shell. Identical rewrites succeed, different ones conflict.
+
+**Publishers** (`.github/workflows/publish.yml`, one job per channel, no `needs:`) each run `scripts/publication/publish.sh`: resolve the signed tag (strict trailers, trusted signature, `C` contained in `main`), materialize and verify the stored bytes against the pinned manifest digest, take the channel lock, record `running`, observe the destination, apply only what is missing, observe again, record `succeeded` or `failed` with an error class. Channels: GitHub Release (draft → exact asset inventory → publish, never clobber), OCI (push by digest, immutable version tags, forward-only `latest` through a stored pointer and repair), crates.io (repackage at `C`, publish only byte-identical bytes, confirm the index checksum), docs and Helm (create-only objects, CAS-updated pointer/index that only grows).
+
+**Release states** (`just release-status X.Y.Z [--json]`):
+
+```text
+PREPARED ─► VALIDATING ─► VALIDATED ─────────────► PROMOTED ─► PUBLISHED
+                 │            (run success + durable     │   (every required channel succeeded)
+                 │             candidate record)         │
+                 ▼                                       ├── <channel>: pending | running | succeeded | failed
+         VALIDATION_FAILED     VALIDATED_UNRETAINED      │   (succeeded once any attempt succeeded, else latest event)
+                               (no record: not           ▼
+                                promotable)          INCONSISTENT (tag exists, a branch lacks C)
+```
+
+Optional channel failures never demote `PROMOTED`. **Recovery** is `just release-retry X.Y.Z <channel>`: it dispatches `publish.yml` with current approved publisher code (default ref `promotion.publisher_ref`), or runs it from the current checkout with `--local`; the identity still comes only from the original signed tag and the bytes only from storage.
+
+The nine required failure tests above map to PR03, PR06, PR14, PB03, PB08, PR15/PR16, PR09/PB05, PB09 and PR10/PB06 in `tests/pipeline/`.

@@ -1,5 +1,9 @@
 name: Candidate
 
+# The only place release artifacts are built. Publishing never rebuilds: it
+# reads the bytes retained here from durable storage, pinned by the manifest
+# digest that the signed release tag carries.
+
 on:
   push:
     branches: ['release/**']
@@ -29,6 +33,8 @@ jobs:
       base_commit: ${{ steps.identity.outputs.base_commit }}
       candidate_branch: ${{ steps.identity.outputs.candidate_branch }}
       adapter: ${{ steps.identity.outputs.adapter }}
+      targets: ${{ steps.matrix.outputs.targets }}
+      storage_uri: ${{ steps.matrix.outputs.storage_uri }}
     steps:
       - name: Checkout candidate source
         uses: actions/checkout@v7
@@ -44,6 +50,19 @@ jobs:
         id: identity
         run: |
           bash scripts/candidate-guard.sh --ref "${GITHUB_REF_NAME}" --commit "${GITHUB_SHA}" | tee -a "${GITHUB_OUTPUT}"
+
+      - name: Package matrix and storage
+        id: matrix
+        env:
+          ADAPTER: ${{ steps.identity.outputs.adapter }}
+          RELEASE_FLOW_STORAGE_URI: ${{ vars.RELEASE_FLOW_STORAGE_URI }}
+        run: |
+          targets="$(bash scripts/candidate-targets.sh --adapter "${ADAPTER}")"
+          echo "targets=${targets}" >> "${GITHUB_OUTPUT}"
+          storage_uri="${RELEASE_FLOW_STORAGE_URI:-$(jq -r '.storage.uri // empty' .release-flow.json)}"
+          echo "storage_uri=${storage_uri}" >> "${GITHUB_OUTPUT}"
+          echo "Package legs: ${targets}"
+          echo "Durable storage: ${storage_uri:-not configured (candidate will not be promotable)}"
 
   test:
     name: Test exact candidate
@@ -77,10 +96,53 @@ jobs:
           fi
 
   package:
-    name: Build and package candidate
+    name: Package (${{ matrix.target || 'all' }})
     needs: guard
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.guard.outputs.targets) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout candidate source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update -y && sudo apt-get install -y musl-tools
+
+      - name: Package this target
+        env:
+          ADAPTER: ${{ needs.guard.outputs.adapter }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          epoch="$(git log -1 --format=%ct)"
+          if [[ -n "${TARGET}" ]]; then
+            export RELEASE_FLOW_TARGET="${TARGET}"
+          fi
+          SOURCE_DATE_EPOCH="${epoch}" "./${ADAPTER}" package "${VERSION}" "${RUNNER_TEMP}/part"
+
+      - name: Upload target part (internal; expires in one day)
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-part-${{ github.sha }}-${{ matrix.target || 'all' }}
+          path: ${{ runner.temp }}/part/
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  assemble:
+    name: Assemble candidate manifest
+    needs: [guard, package]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     outputs:
       artifact_name: ${{ steps.manifest.outputs.artifact_name }}
       manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
@@ -94,21 +156,19 @@ jobs:
       - name: Install toolchain
         run: rustup toolchain install stable --profile minimal
 
+      - name: Download every target part
+        uses: actions/download-artifact@v8
+        with:
+          pattern: candidate-part-${{ github.sha }}-*
+          merge-multiple: true
+          path: dist
+
       - name: Generate artifact inventory
         env:
           ADAPTER: ${{ needs.guard.outputs.adapter }}
           VERSION: ${{ needs.guard.outputs.version }}
         run: |
           "./${ADAPTER}" inventory "${VERSION}" > "${RUNNER_TEMP}/inventory.json"
-
-      - name: Package artifacts
-        env:
-          ADAPTER: ${{ needs.guard.outputs.adapter }}
-          VERSION: ${{ needs.guard.outputs.version }}
-        run: |
-          epoch="$(git log -1 --format=%ct)"
-          echo "SOURCE_DATE_EPOCH=${epoch}" >> "${GITHUB_ENV}"
-          SOURCE_DATE_EPOCH="${epoch}" "./${ADAPTER}" package "${VERSION}" dist
 
       - name: Generate artifact manifest
         id: manifest
@@ -121,6 +181,7 @@ jobs:
           BASE_COMMIT: ${{ needs.guard.outputs.base_commit }}
           CANDIDATE_BRANCH: ${{ needs.guard.outputs.candidate_branch }}
         run: |
+          epoch="$(git log -1 --format=%ct)"
           manifest_sha="$(bash scripts/candidate-manifest.sh \
             --dir dist \
             --inventory "${RUNNER_TEMP}/inventory.json" \
@@ -134,7 +195,7 @@ jobs:
             --candidate-commit "${GITHUB_SHA}" \
             --run-id "${GITHUB_RUN_ID}" \
             --run-attempt "${GITHUB_RUN_ATTEMPT}" \
-            --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+            --source-date-epoch "${epoch}" \
             --adapter "${ADAPTER}")"
           echo "manifest_sha256=${manifest_sha}" >> "${GITHUB_OUTPUT}"
           echo "artifact_name=candidate-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
@@ -158,7 +219,7 @@ jobs:
 
   verify:
     name: Verify downloaded candidate
-    needs: [guard, package]
+    needs: [guard, assemble]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -171,7 +232,7 @@ jobs:
       - name: Download candidate artifacts
         uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.package.outputs.artifact_name }}
+          name: ${{ needs.assemble.outputs.artifact_name }}
           path: candidate
 
       - name: Verify checksums, manifest and source identity
@@ -180,7 +241,7 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
           MODE: ${{ needs.guard.outputs.mode }}
           BASE_COMMIT: ${{ needs.guard.outputs.base_commit }}
-          MANIFEST_SHA256: ${{ needs.package.outputs.manifest_sha256 }}
+          MANIFEST_SHA256: ${{ needs.assemble.outputs.manifest_sha256 }}
         run: |
           bash scripts/verify-candidate.sh \
             --dir candidate \
@@ -193,10 +254,52 @@ jobs:
             --run-id "${GITHUB_RUN_ID}" \
             --manifest-sha256 "${MANIFEST_SHA256}"
 
+  retain:
+    name: Retain candidate in durable storage
+    needs: [guard, test, assemble, verify]
+    if: needs.guard.outputs.mode == 'production' && needs.guard.outputs.storage_uri != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: candidate-storage
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout candidate source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download candidate artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.assemble.outputs.artifact_name }}
+          path: candidate
+
+      - name: Storage credentials
+        env:
+          RELEASE_FLOW_STORAGE_URI: ${{ needs.guard.outputs.storage_uri }}
+          RELEASE_FLOW_AWS_ROLE_ARN: ${{ vars.RELEASE_FLOW_AWS_ROLE_ARN }}
+          RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
+          RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
+        run: bash scripts/storage/ci-credentials.sh
+
+      - name: Store blobs and the candidate record (create-only)
+        env:
+          RELEASE_FLOW_STORAGE_URI: ${{ needs.guard.outputs.storage_uri }}
+          MANIFEST_SHA256: ${{ needs.assemble.outputs.manifest_sha256 }}
+        run: |
+          bash scripts/storage/storage.sh retain-candidate \
+            --dir candidate \
+            --manifest-sha256 "${MANIFEST_SHA256}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --run-id "${GITHUB_RUN_ID}"
+
   report:
     name: Candidate OK
     if: always() && github.event.deleted != true
-    needs: [guard, test, package, verify]
+    needs: [guard, test, package, assemble, verify, retain]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -205,11 +308,14 @@ jobs:
           GUARD_RES: ${{ needs.guard.result }}
           TEST_RES: ${{ needs.test.result }}
           PKG_RES: ${{ needs.package.result }}
+          ASSEMBLE_RES: ${{ needs.assemble.result }}
           VERIFY_RES: ${{ needs.verify.result }}
+          RETAIN_RES: ${{ needs.retain.result }}
           VERSION: ${{ needs.guard.outputs.version }}
           MODE: ${{ needs.guard.outputs.mode }}
+          STORAGE_URI: ${{ needs.guard.outputs.storage_uri }}
           COMMIT: ${{ github.sha }}
-          MANIFEST_SHA: ${{ needs.package.outputs.manifest_sha256 }}
+          MANIFEST_SHA: ${{ needs.assemble.outputs.manifest_sha256 }}
         run: |
           cat <<EOF >> "${GITHUB_STEP_SUMMARY}"
           # Release Candidate Validation Report
@@ -222,17 +328,28 @@ jobs:
           | Manifest SHA256 | \`${MANIFEST_SHA:-unknown}\` |
           | Guard | ${GUARD_RES} |
           | Tests & Checks | ${TEST_RES} |
-          | Build & Package | ${PKG_RES} |
+          | Package legs | ${PKG_RES} |
+          | Assemble manifest | ${ASSEMBLE_RES} |
           | Artifact Verification | ${VERIFY_RES} |
+          | Durable retention | ${RETAIN_RES} |
 
           EOF
 
-          if [[ "${GUARD_RES}" == "success" && "${TEST_RES}" == "success" && \
-                "${PKG_RES}" == "success" && "${VERIFY_RES}" == "success" ]]; then
+          retain_ok=false
+          if [[ "${RETAIN_RES}" == "success" ]]; then
+            retain_ok=true
+          elif [[ "${RETAIN_RES}" == "skipped" && ( "${MODE}" == "test-only" || -z "${STORAGE_URI}" ) ]]; then
+            retain_ok=true
+          fi
+
+          if [[ "${GUARD_RES}" == "success" && "${TEST_RES}" == "success" && "${PKG_RES}" == "success" && \
+                "${ASSEMBLE_RES}" == "success" && "${VERIFY_RES}" == "success" && "${retain_ok}" == "true" ]]; then
             if [[ "${MODE}" == "test-only" ]]; then
               echo "::notice::TEST-ONLY candidate validated. This candidate is not promotable to production."
+            elif [[ -z "${STORAGE_URI}" ]]; then
+              echo "::warning::Production candidate validated, but durable storage is not configured: it is not promotable."
             else
-              echo "::notice::Production release candidate VALIDATED for commit ${COMMIT}."
+              echo "::notice::Production release candidate VALIDATED and retained for commit ${COMMIT}."
             fi
             exit 0
           else

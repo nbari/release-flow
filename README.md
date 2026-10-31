@@ -9,7 +9,8 @@
 
 `release-flow` is a practical reference project for building software releases that are **validated before promotion**, **promoted without partial Git ref updates**, and **published through independently retryable channels**. Its Rust CLI is useful for inspecting release readiness; the **release pipeline is the primary project**. The project will eventually release its own binary using the process described here, then serve as a reusable pattern for other repositories.
 
-> **Status: Milestone 1 implemented.** The Rust CLI (`status`, `plan`, `check`), isolated worktree candidate preparation, language-agnostic project adapter, candidate validation pipeline, and independent manifest verification are implemented and tested. Atomic promotion (Milestone 2) and independent publishing (Milestone 3) remain planned.
+> **Status: Milestones 1–3 implemented.** The Rust CLI (`status`, `plan`, `check`), isolated worktree candidate preparation, the language-agnostic adapter, the multi-platform candidate pipeline, guarded atomic promotion (`just release-promote`), durable content-addressed storage and independently recoverable publishers (`just release-status`, `just release-retry`) are implemented and covered by failure-injection tests. Dogfooding a real release of `release-flow` waits on durable storage and rulesets being provisioned for this repository (see [RULESETS.md](docs/RULESETS.md)).
+
 ## The release contract
 
 1. **One release = one version + one exact source commit + one verified artifact inventory.** Branch names and "latest" are never sufficient release identities.
@@ -22,7 +23,7 @@
 
 The target is a *recoverable release*, not an impossible all-or-nothing transaction spanning Git and external services.
 
-## Target flow (design; not yet executable)
+## Release flow
 
 ```text
                           contributor PRs
@@ -86,7 +87,7 @@ sandbox ───── optional squash ─┴───────────�
 
 `main` and `develop` should remain linear; promotion must be a fast-forward of both. `sandbox` commits can be squash-integrated into `develop` **before** creating a candidate, never afterward. An integration-branch change while a candidate is being tested invalidates its promotion eligibility; test a fresh candidate against the new base rather than force-pushing.
 
-**Production protection is not yet configured in this repository.** Before enabling automatic releases, apply and test GitHub rulesets: require trusted checks and signed release commits, block force pushes and unwanted updates, restrict `main` promotion to a dedicated release actor, and prohibit version-tag update/deletion. An unconditional "PR required" policy on `main` conflicts with direct atomic promotion: choose an explicitly constrained release-actor bypass (or a different promotion design), never a blanket admin bypass. The actor still must independently verify the exact candidate and ref ancestry.
+**Production protection is an owner action.** [RULESETS.md](docs/RULESETS.md) and `docs/rulesets/*.json` define the rulesets: `main` and `develop` deletion/non-fast-forward protection, the required `Candidate OK` check on `main`, `main` updates and release-tag creation restricted to the single release deploy key, immutable release tags and immutable `release/**` candidates. An unconditional "PR required" policy on `main` would conflict with direct atomic promotion, so promotion uses a narrowly scoped deploy-key bypass, never a blanket admin bypass. `just release-promote` refuses to promote (PF20) until the rules are in place, and still verifies the exact candidate and ref ancestry itself.
 
 ## Detailed release protocol
 
@@ -162,25 +163,26 @@ PUBLISHED = PROMOTED + all required publishers succeeded
 
 The **artifact manifest is immutable**; the publisher status/attempt ledger is separately updateable. Each attempt records version, `C`, channel, workflow run, timestamps, observed digest/state, and an actionable error. Recovery reads actual remote state first; it must not assume that an interrupted job did nothing.
 
-The eventual UX should support individually retrying one publisher without rerunning promotion, for example `release-flow retry X.Y.Z oci` or `just release-retry X.Y.Z oci`. **These commands are proposed, not implemented.**
+`just release-retry X.Y.Z <channel>` reruns one publisher without rerunning promotion: by default it dispatches `publish.yml` with current approved publisher code (`--ref`, default `promotion.publisher_ref`), `--local` runs it from your checkout, and `--break-lock` clears an expired publication lock first. `just release-status X.Y.Z [--json]` derives the state above from the remote tag, the durable ledger and the GitHub evidence.
 
 ### Required failure-injection scenarios
 
-| Failure | Expected response |
-| --- | --- |
-| Build/test/check fails | No `main`/`develop`/tag update; fix or retry candidate |
-| `develop` advances after candidate validation | Reject stale promotion; regenerate/revalidate candidate |
-| Two promotion attempts race | At most one accepted version/tag promotion |
-| Atomic push is rejected | No production ref changes; inspect and retry safely |
-| Process loses response after atomic push | Read remote refs/tag; resume publishing if already promoted |
-| GitHub Release upload fails | Resume its draft/asset verification only |
-| OCI publish fails after GitHub Release succeeds | Retry OCI only, with original digest |
-| Old docs/Helm job finishes late | Never replace a newer `latest` pointer |
-| Artifact checksum differs / storage expires | Block that publish; do not fabricate replacement bytes |
-| Tag-workflow implementation has a bug | Use trusted current recovery workflow; same signed tag + original artifacts |
-| Publisher retried twice concurrently | Lock/reconcile; identical result is success, conflict is failure |
+| Failure | Expected response | Test |
+| --- | --- | --- |
+| Build/test/check fails | No `main`/`develop`/tag update; fix or retry candidate | PR03 |
+| `develop` advances after candidate validation | Reject stale promotion; regenerate/revalidate candidate | PR06 |
+| Two promotion attempts race | At most one accepted version/tag promotion | PR15, PR16 |
+| Atomic push is rejected | No production ref changes; inspect and retry safely | PR12 |
+| Process loses response after atomic push | Read remote refs/tag; resume publishing if already promoted | PR13 |
+| Interrupted after the local tag is created | Remote unchanged; rerun reuses the signed local tag | PR14 |
+| GitHub Release upload fails | Resume its draft/asset verification only | PB02, PB03 |
+| OCI publish fails after GitHub Release succeeds | Retry OCI only, with original digest | PB08 |
+| Old docs/Helm/OCI job finishes late | Never replace a newer `latest` pointer | PB09, PB11 |
+| Artifact checksum differs / storage expires | Block that publish; do not fabricate replacement bytes | PR09, PR10, PB05, PB06 |
+| Tag-workflow implementation has a bug | Use trusted current recovery workflow; same signed tag + original artifacts | IN03 |
+| Publisher retried twice concurrently | Lock/reconcile; identical result is success, conflict is failure | IN02 |
 
-These cases must have automated tests **before** production promotion is enabled.
+All of these run in `just pipeline-test` (`tests/pipeline/test-promote.sh`, `test-publishers.sh`, `test-storage.sh`, `test-integration.sh`).
 
 ## Current implementation
 
@@ -206,7 +208,20 @@ just build
 
 The [CI workflow](.github/workflows/ci.yml) runs formatting, Clippy, unit and integration tests, candidate failure tests, and CLI checks.
 
-The [Candidate workflow](.github/workflows/candidate.yml) is triggered automatically on push to temporary `release/**` branches. It enforces exact candidate identity and trailers via `scripts/candidate-guard.sh`, executes project tests and packaging via the adapter, generates an immutable `manifest.json` with `SHA256SUMS`, uploads the artifacts, and downloads them in an isolated verification job to confirm inventory and checksums.
+The [Candidate workflow](.github/workflows/candidate.yml) is triggered automatically on push to temporary `release/**` branches. It enforces exact candidate identity and trailers via `scripts/candidate-guard.sh`, runs the project tests, packages every adapter target in a matrix (`scripts/candidate-targets.sh`), assembles one immutable `manifest.json` with `SHA256SUMS`, downloads and verifies the artifacts in an isolated job, and, for production candidates, retains the verified bytes and a candidate record in durable storage (`scripts/storage/storage.sh retain-candidate`). It is the only place release artifacts are built.
+
+The [Publish workflow](.github/workflows/publish.yml) runs on the signed tag push with one job per channel (GitHub Release, OCI, crates.io, docs, Helm) and no `needs:` between them; each resolves the signed tag and the stored bytes on its own.
+
+### Promoting and publishing
+
+```sh
+just release-promote release/X.Y.Z-<base12> <candidate-sha> --dry-run   # preflight only (PF01-PF20)
+just release-promote release/X.Y.Z-<base12> <candidate-sha>             # signed tag + one atomic push
+just release-status X.Y.Z                                               # PROMOTED / PUBLISHED and per-channel state
+just release-retry X.Y.Z oci                                            # rerun one publisher (dispatch; --local to run here)
+```
+
+Promotion runs locally with the release operator's credentials: the single write deploy key configured as `promotion.push_remote` and a signing key registered on GitHub. It never builds, never force-pushes and never moves or deletes a tag; whatever the push reports, the verdict comes from re-reading the remote (exit codes 10–14 tell you whether to rerun, prepare a new candidate or repair by hand).
 
 ### Preparing a candidate
 
@@ -243,12 +258,13 @@ See [ADOPTION.md](docs/ADOPTION.md) for the deploy module, the versioned install
 | Worktree + versioned temporary candidate | **Implemented** | Isolated worktree preparation; no production ref changes |
 | Reusable adapter contract & Cargo reference | **Implemented** | Project-independent adapter protocol v1 |
 | Exact-SHA candidate pipeline & manifest v1 | **Implemented** | Same-run verification; pinned manifest hash; independent verifier |
-| Pipeline failure-injection test suite | **Implemented** | All 6 test suites pass in `just check` |
+| Pipeline failure-injection test suite | **Implemented** | All 10 test suites pass in `just check` |
 | Branch-aware `just deploy` + versioned bundle | **Implemented** | Branch policy, rejection-without-changes and bundle installer suites pass |
-| Atomic exact-SHA promotion + signed tag + rulesets | **Planned** | Race/stale-branch/partial-push tests pass |
-| Durable manifest + independent publishers | **Planned** | Retry one publisher without rebuilding or retagging |
-| Complete recovery / fault-injection suite | **Planned** | All failure scenarios demonstrated end-to-end |
-| Dogfood a real release of `release-flow` | **Planned** | Self-release can recover interrupted publishers |
-**Source of truth:** This README states the intended release contract. [Release design](docs/RELEASE_DESIGN.md) expands the invariants and failure cases; [AGENTS.md](AGENTS.md) covers contributor/agent guidelines. **Do not mistake planned capabilities for working commands.**
+| Atomic exact-SHA promotion + signed tag + rulesets | **Implemented** | PR01–PR18 (race, stale branch, rejected and lost pushes, interruption, protection, signing) |
+| Durable manifest + independent publishers | **Implemented** | ST01–ST09, PB01–PB11: retry one publisher without rebuilding or retagging |
+| Complete recovery / fault-injection suite | **Implemented** | IN01–IN04 end to end through `just` |
+| Dogfood a real release of `release-flow` | **Planned** | Needs durable storage (`storage.uri`) and the rulesets applied; self-release can recover interrupted publishers |
+
+**Source of truth:** This README states the release contract. [Release design](docs/RELEASE_DESIGN.md) expands the invariants, state machines and failure cases; [RULESETS.md](docs/RULESETS.md) the server-side protection; [AGENTS.md](AGENTS.md) covers contributor/agent guidelines.
 
 Licensed under [BSD-3-Clause](LICENSE).

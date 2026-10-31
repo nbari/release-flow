@@ -20,15 +20,44 @@ PAYLOAD=(
   scripts/candidate-guard.sh
   scripts/candidate-manifest.sh
   scripts/verify-candidate.sh
+  scripts/candidate-targets.sh
+  scripts/release-promote.sh
+  scripts/release-status.sh
+  scripts/release-retry.sh
+  scripts/lib/common.sh
+  scripts/lib/github.sh
+  scripts/lib/schema.sh
+  scripts/lib/tag.sh
+  scripts/storage/storage.sh
+  scripts/storage/ci-credentials.sh
+  scripts/storage/backends/fs.sh
+  scripts/storage/backends/s3.sh
+  scripts/publication/ci-install-oras.sh
+  scripts/publication/latest.sh
+  scripts/publication/ledger.sh
+  scripts/publication/publish.sh
+  scripts/publication/resolve.sh
+  scripts/publishers/crates-io.sh
+  scripts/publishers/docs.sh
+  scripts/publishers/github-release.sh
+  scripts/publishers/helm.sh
+  scripts/publishers/oci.sh
   .github/workflows/candidate.yml
+  .github/workflows/publish.yml
 )
 # Files installed only on request (install.sh --with-cargo-adapter).
 OPTIONAL=(
   scripts/adapters/cargo.sh
 )
 # Bundle support files: bundle path <- source path.
-SUPPORT_DST=(install.sh docs/ADOPTION.md docs/release-flow.example.json)
-SUPPORT_SRC=(scripts/release-flow-install.sh docs/ADOPTION.md docs/release-flow.example.json)
+SUPPORT_DST=(install.sh docs/ADOPTION.md docs/release-flow.example.json docs/RULESETS.md
+  docs/rulesets/candidates.json docs/rulesets/develop-integrity.json docs/rulesets/develop-review.json
+  docs/rulesets/main-integrity.json docs/rulesets/main-promotion.json docs/rulesets/release-tags-create.json
+  docs/rulesets/release-tags-immutable.json)
+SUPPORT_SRC=(scripts/release-flow-install.sh docs/ADOPTION.md docs/release-flow.example.json docs/RULESETS.md
+  docs/rulesets/candidates.json docs/rulesets/develop-integrity.json docs/rulesets/develop-review.json
+  docs/rulesets/main-integrity.json docs/rulesets/main-promotion.json docs/rulesets/release-tags-create.json
+  docs/rulesets/release-tags-immutable.json)
 
 version=""
 out_dir=""

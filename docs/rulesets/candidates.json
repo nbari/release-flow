@@ -1,0 +1,22 @@
+{
+  "name": "release-flow: immutable candidates",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/heads/release/**"
+      ],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "update"
+    },
+    {
+      "type": "non_fast_forward"
+    }
+  ]
+}

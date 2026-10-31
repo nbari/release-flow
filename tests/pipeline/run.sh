@@ -4,8 +4,9 @@ set -euo pipefail
 
 test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Verify required tools are available
-for tool in git jq sha256sum tar gzip setsid awk just; do
+# Verify required tools are available (ssh-keygen signs release tags, flock
+# serializes the mock S3 store, curl reads the file:// crates index).
+for tool in git jq sha256sum tar gzip setsid awk just ssh-keygen flock curl; do
   if ! command -v "${tool}" >/dev/null 2>&1; then
     echo "Missing required test tool: ${tool}" >&2
     exit 1

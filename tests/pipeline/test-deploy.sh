@@ -108,6 +108,13 @@ t_run just --summary
 assert_contains " ${T_OUT} " " deploy " "D01: deploy is a top-level recipe"
 assert_contains " ${T_OUT} " " deploy-minor " "D01: deploy-minor is a top-level recipe"
 assert_contains " ${T_OUT} " " deploy-major " "D01: deploy-major is a top-level recipe"
+for recipe in release-promote release-status release-retry; do
+  assert_contains " ${T_OUT} " " ${recipe} " "D01: ${recipe} is a top-level recipe"
+done
+t_run just --list
+for recipe in release-promote release-status release-retry; do
+  assert_contains "${T_OUT}" "${recipe} " "D01: lists ${recipe}"
+done
 t_run just deploy::deploy
 assert_rc nonzero "D01: just deploy::deploy does not exist"
 t_run just

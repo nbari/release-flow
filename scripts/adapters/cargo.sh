@@ -49,7 +49,38 @@ resolve_target() {
   fi
 }
 
+# RELEASE_FLOW_CARGO_TARGETS: space-separated "<rust-target>[:<runner>]" list
+# (runner defaults to ubuntu-24.04). Unset: a single target, the host (or
+# RELEASE_FLOW_CARGO_TARGET).
+configured_targets() {
+  local spec
+  for spec in ${RELEASE_FLOW_CARGO_TARGETS:-}; do
+    if [[ "${spec}" == *:* ]]; then
+      printf '%s\t%s\n' "${spec%%:*}" "${spec#*:}"
+    else
+      printf '%s\tubuntu-24.04\n' "${spec}"
+    fi
+  done
+}
+
+build_targets() {
+  if [[ -n "${RELEASE_FLOW_CARGO_TARGETS:-}" ]]; then
+    configured_targets | cut -f1
+  else
+    resolve_target
+    printf '\n'
+  fi
+}
+
 case "${subcommand}" in
+  targets)
+    if [[ -z "${RELEASE_FLOW_CARGO_TARGETS:-}" ]]; then
+      echo "targets: set RELEASE_FLOW_CARGO_TARGETS (\"<rust-target>[:<runner>] ...\") for a multi-platform matrix" >&2
+      exit 2
+    fi
+    configured_targets | jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {target: .[0], runner: .[1]})'
+    ;;
+
   version)
     pkg="$(resolve_package)"
     cargo metadata --no-deps --format-version 1 | jq -er --arg p "${pkg}" '.packages[] | select(.name == $p) | .version'
@@ -138,7 +169,6 @@ case "${subcommand}" in
       exit 2
     fi
     pkg="$(resolve_package)"
-    target="$(resolve_target)"
     rustc_ver="$(rustc --version 2>/dev/null || echo "unknown")"
     cargo_ver="$(cargo --version 2>/dev/null || echo "unknown")"
     lock_hash=""
@@ -146,23 +176,10 @@ case "${subcommand}" in
       lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
     fi
 
-    cat <<EOF
-{
-  "artifacts": [
-    {
-      "name": "${pkg}-${target_version}-${target}.tar.gz",
-      "target": "${target}"
-    }
-  ],
-  "build_info": {
-    "tools": {
-      "rustc": "${rustc_ver}",
-      "cargo": "${cargo_ver}",
-      "cargo_lock_sha256": "${lock_hash}"
-    }
-  }
-}
-EOF
+    build_targets | jq -R -s --arg pkg "${pkg}" --arg v "${target_version}" \
+      --arg rustc "${rustc_ver}" --arg cargo "${cargo_ver}" --arg lock "${lock_hash}" '
+      {artifacts: (split("\n") | map(select(length > 0) | {name: ($pkg + "-" + $v + "-" + . + ".tar.gz"), target: .})),
+       build_info: {tools: {rustc: $rustc, cargo: $cargo, cargo_lock_sha256: $lock}}}'
     ;;
 
   package)
@@ -179,7 +196,6 @@ EOF
 
     pkg="$(resolve_package)"
     bin_name="$(resolve_bin "${pkg}")"
-    target="$(resolve_target)"
     curr_ver="$(cargo metadata --no-deps --format-version 1 | jq -er --arg p "${pkg}" '.packages[] | select(.name == $p) | .version')"
     if [[ "${curr_ver}" != "${target_version}" ]]; then
       echo "Version mismatch: package version ${target_version} != Cargo manifest version ${curr_ver}" >&2
@@ -195,33 +211,61 @@ EOF
       mkdir -p "${outdir}"
     fi
 
-    target_dir="$(cargo metadata --no-deps --format-version 1 | jq -er '.target_directory')"
-    target_dir_rel="${target_dir#"$PWD"/}"
-
-    if [[ -n "${RELEASE_FLOW_CARGO_TARGET:-}" ]]; then
-      cargo build --release --locked --package "${pkg}" --bin "${bin_name}" --target "${RELEASE_FLOW_CARGO_TARGET}"
-      bin_path="${target_dir_rel}/${RELEASE_FLOW_CARGO_TARGET}/release/${bin_name}"
+    # GNU tar is required for --sort/--owner/--mode (gtar on macOS).
+    if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+      gnu_tar=tar
+    elif command -v gtar >/dev/null 2>&1; then
+      gnu_tar=gtar
     else
-      cargo build --release --locked --package "${pkg}" --bin "${bin_name}"
-      bin_path="${target_dir_rel}/release/${bin_name}"
+      echo "GNU tar is required for deterministic archives (install gtar)" >&2
+      exit 1
     fi
 
-    stage_dir="$(mktemp -d)"
-    trap 'rm -rf "${stage_dir}"' EXIT
+    target_dir="$(cargo metadata --no-deps --format-version 1 | jq -er '.target_directory')"
+    target_dir_rel="${target_dir#"$PWD"/}"
+    explicit_target=false
+    if [[ -n "${RELEASE_FLOW_CARGO_TARGETS:-}" || -n "${RELEASE_FLOW_CARGO_TARGET:-}" ]]; then
+      explicit_target=true
+    fi
+    host="$(rustc -vV | awk '/^host:/ {print $2}')"
 
-    cp "${bin_path}" "${stage_dir}/"
-    for doc in LICENSE LICENSE-* COPYING COPYING-* README.md; do
-      if [[ -f "${doc}" ]]; then
-        cp "${doc}" "${stage_dir}/"
+    stage_dir=""
+    trap '[[ -z "${stage_dir}" ]] || rm -rf "${stage_dir}"' EXIT
+    while IFS= read -r target; do
+      [[ -n "${target}" ]] || continue
+      # RELEASE_FLOW_TARGET (one candidate.yml matrix leg) selects one target.
+      if [[ -n "${RELEASE_FLOW_TARGET:-}" && "${RELEASE_FLOW_TARGET}" != "${target}" ]]; then
+        continue
       fi
-    done
+      bin_file="${bin_name}"
+      case "${target}" in
+        *-windows-*) bin_file="${bin_name}.exe" ;;
+      esac
+      if [[ "${explicit_target}" == "true" ]]; then
+        if [[ "${target}" != "${host}" ]] && command -v rustup >/dev/null 2>&1; then
+          rustup target add "${target}" >&2
+        fi
+        cargo build --release --locked --package "${pkg}" --bin "${bin_name}" --target "${target}"
+        bin_path="${target_dir_rel}/${target}/release/${bin_file}"
+      else
+        cargo build --release --locked --package "${pkg}" --bin "${bin_name}"
+        bin_path="${target_dir_rel}/release/${bin_file}"
+      fi
 
-    archive_name="${pkg}-${target_version}-${target}.tar.gz"
-    tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
-      --mode='u+rwX,go+rX,go-w' -C "${stage_dir}" -cf - . | gzip -n > "${outdir}/${archive_name}"
+      stage_dir="$(mktemp -d)"
+      cp "${bin_path}" "${stage_dir}/"
+      for doc in LICENSE LICENSE-* COPYING COPYING-* README.md; do
+        if [[ -f "${doc}" ]]; then
+          cp "${doc}" "${stage_dir}/"
+        fi
+      done
 
-    rm -rf "${stage_dir}"
-    trap - EXIT
+      archive_name="${pkg}-${target_version}-${target}.tar.gz"
+      "${gnu_tar}" --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+        --mode='u+rwX,go+rX,go-w' -C "${stage_dir}" -cf - . | gzip -n > "${outdir}/${archive_name}"
+      rm -rf "${stage_dir}"
+      stage_dir=""
+    done <<< "$(build_targets)"
     ;;
 
   *)
