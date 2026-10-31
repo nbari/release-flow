@@ -7,3 +7,28 @@ Treat source SHA, version, and artifact digest as immutable identities. Keep bra
 Contributors normally submit PRs to `develop`; an explicitly authorized maintainer may integrate directly by fast-forward, without a PR. Do not directly update `main`; the production promotion path must be tested and explicitly authorized. Tests and documentation should focus on release invariants and failure recovery, not on CLI scaffolding.
 
 Before proposing release changes: run `just check`, inspect GitHub Actions results on the exact source SHA, and verify candidate manifests. No operation that changes a remote branch or creates a tag belongs in `status` or `plan`.
+
+## Agent and terminal workflows with Herdr
+
+When `HERDR_ENV=1` is present, always launch subagents, tasks, or visible command watchers in a sibling Herdr pane so the user can easily observe activity and progress live:
+
+1. **Split a visible sibling pane:**
+   ```bash
+   herdr pane split --current --direction right --cwd "$PWD" --no-focus
+   ```
+2. **Launch an agent or run a command:**
+   - To launch an agent:
+     ```bash
+     herdr agent start <name> --kind <kind> --pane <pane-id>
+     herdr agent prompt <name> "<task>" --wait
+     ```
+   - To run or watch a command:
+     ```bash
+     herdr pane run <pane-id> "<command>"
+     herdr pane wait-output <pane-id> --match "<text>" --timeout <ms>
+     ```
+3. **Clean up when finished:**
+   ```bash
+   herdr pane close <pane-id>
+   ```
+Always close created panes when their task completes.
