@@ -63,6 +63,7 @@ edition = "2024"
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
+    #[allow(dead_code)]
     fn head_commit(&self) -> String {
         self.git(&["rev-parse", "HEAD"])
     }
