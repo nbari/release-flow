@@ -1,0 +1,414 @@
+---
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: >-
+          Recovery: an existing X.Y.Z tag whose publishing failed. Run on main; it
+          checks the tag like its own run would and publishes the tag's candidate artifacts.
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Release guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      kind: ${{ steps.classify.outputs.kind }}
+      version: ${{ steps.classify.outputs.version }}
+      tag: ${{ steps.classify.outputs.tag }}
+      commit: ${{ steps.release.outputs.commit }}
+      candidate_run: ${{ steps.release.outputs.candidate_run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Classify the run
+        id: classify
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          version="$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)"
+          tag=""
+          if [[ "${EVENT}" == workflow_dispatch && -n "${PUBLISH:-}" ]]; then
+            if [[ "${GITHUB_REF}" != refs/heads/main || ! "${PUBLISH}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::A recovery run needs an X.Y.Z tag in 'publish' and must run on main."
+              exit 1
+            fi
+            kind=recover
+            tag="${PUBLISH}"
+            version="${PUBLISH}"
+          elif [[ "${EVENT}" == workflow_dispatch && "${GITHUB_REF}" == refs/heads/* ]]; then
+            kind=candidate
+          elif [[ "${EVENT}" == push && "${GITHUB_REF}" == refs/tags/* && "${GITHUB_REF_NAME}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            kind=release
+            tag="${GITHUB_REF_NAME}"
+          else
+            kind=test-tag
+            version="test"
+            if [[ "${GITHUB_REF_NAME}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+              version="${GITHUB_REF_NAME}"
+            fi
+          fi
+          if [[ "${kind}" != test-tag && ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Cargo.toml has no X.Y.Z version (found '${version}')."
+            exit 1
+          fi
+          {
+            echo "kind=${kind}"
+            echo "version=${version}"
+            echo "tag=${tag}"
+          } >> "$GITHUB_OUTPUT"
+          echo "${EVENT} on ${GITHUB_REF} classified as ${kind} (version ${version}${tag:+, tag ${tag}})."
+
+      - name: Require the tag's commit, version, and verification
+        id: release
+        if: steps.classify.outputs.kind == 'release' || steps.classify.outputs.kind == 'recover'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.classify.outputs.tag }}
+          KIND: ${{ steps.classify.outputs.kind }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          read -r type object <<<"$(gh api "repos/${repo}/git/ref/tags/${TAG}" --jq '"\(.object.type) \(.object.sha)"')"
+          if [[ "${type}" != tag ]]; then
+            echo "::error::${TAG} is not an annotated tag; refusing to release."
+            exit 1
+          fi
+          read -r verified commit <<<"$(gh api "repos/${repo}/git/tags/${object}" --jq '"\(.verification.verified) \(.object.sha)"')"
+          message="$(gh api "repos/${repo}/git/tags/${object}" --jq '.message')"
+          if [[ "${verified}" != true ]]; then
+            echo "::error::The signature of tag ${TAG} is not verified by GitHub; refusing to release."
+            exit 1
+          fi
+          if [[ "${KIND}" == release && "${commit}" != "${GITHUB_SHA}" ]]; then
+            echo "::error::Tag ${TAG} points at ${commit}, but this run is for ${GITHUB_SHA}."
+            exit 1
+          fi
+          status="$(gh api "repos/${repo}/compare/${commit}...main" --jq '.status')"
+          if [[ "${status}" != identical && "${status}" != ahead ]]; then
+            echo "::error::Tag ${TAG} points at ${commit}, which is not on main (${status}); refusing to release."
+            exit 1
+          fi
+          version="$(gh api "repos/${repo}/contents/Cargo.toml?ref=${commit}" --jq '.content' | base64 -d | awk -F'"' '/^version = /{print $2; exit}')"
+          if [[ "${version}" != "${TAG}" ]]; then
+            echo "::error::Tag ${TAG} does not match the package version ${version} at ${commit}; refusing to release."
+            exit 1
+          fi
+
+          candidate_run="$(sed -n 's/^Candidate run: \([0-9][0-9]*\)$/\1/p' <<<"${message}" | head -n 1)"
+          {
+            echo "commit=${commit}"
+            echo "candidate_run=${candidate_run}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Tag ${TAG}: commit ${commit} validated on main."
+
+  test:
+    needs: guard
+    if: needs.guard.outputs.kind == 'candidate' || needs.guard.outputs.kind == 'test-tag'
+    uses: ./.github/workflows/test.yml
+
+  build:
+    name: Build and package
+    runs-on: ${{ matrix.os }}
+    needs:
+      - guard
+      - test
+    if: needs.guard.outputs.kind == 'candidate' || needs.guard.outputs.kind == 'test-tag'
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+
+    strategy:
+      matrix:
+        include:
+          - build: linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+
+          - build: macos
+            os: macos-latest
+            target: x86_64-apple-darwin
+
+          - build: windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Get package name from Cargo.toml
+        id: package
+        shell: bash
+        run: |
+          PACKAGE_NAME=$(awk -F '"' '/^name = / {print $2; exit}' Cargo.toml)
+          echo "name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "Package name: $PACKAGE_NAME"
+
+      - name: Install Rust
+        uses: ./.github/actions/rust-toolchain
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install system deps (musl)
+        if: startsWith(matrix.build, 'linux')
+        run: sudo apt-get update -y && sudo apt-get install -y musl-dev musl-tools
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Build archive
+        shell: bash
+        run: |
+          binary_name="${{ steps.package.outputs.name }}"
+          dirname="$binary_name-${VERSION}-${{ matrix.target }}"
+          mkdir -p "$dirname"
+          cp LICENSE README.md "$dirname/" 2>/dev/null || true
+
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp "target/${{ matrix.target }}/release/$binary_name.exe" "$dirname/"
+            7z a "$dirname.zip" "$dirname"
+            echo "ASSET=$dirname.zip" >> "$GITHUB_ENV"
+          else
+            cp "target/${{ matrix.target }}/release/$binary_name" "$dirname/"
+            tar -czf "$dirname.tar.gz" "$dirname"
+            echo "ASSET=$dirname.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - name: Collect the release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "${ASSET}" dist/
+          ls -al dist
+
+      - name: Upload the release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.build }}
+          path: dist/*
+          if-no-files-found: error
+
+  crate:
+    name: Crate package
+    runs-on: ubuntu-latest
+    needs: guard
+    if: needs.guard.outputs.kind == 'candidate' || needs.guard.outputs.kind == 'test-tag'
+    outputs:
+      rust: ${{ steps.package.outputs.rust }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: ./.github/actions/rust-toolchain
+
+      - name: Package and verify the crate
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo package --locked
+          mkdir -p crate
+          cp target/package/*.crate crate/
+          ls -al crate
+          echo "rust=$(rustc --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the crate
+        uses: actions/upload-artifact@v7
+        with:
+          name: crate
+          path: crate/*
+          if-no-files-found: error
+
+  manifest:
+    name: Release manifest
+    runs-on: ubuntu-latest
+    needs:
+      - guard
+      - build
+      - crate
+    if: needs.guard.outputs.kind == 'candidate'
+    steps:
+      - name: Download this run's assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: artifacts
+
+      - name: Download this run's crate
+        uses: actions/download-artifact@v8
+        with:
+          name: crate
+          path: crate
+
+      - name: Write the manifest
+        shell: bash
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          RUST: ${{ needs.crate.outputs.rust }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist manifest
+          find artifacts -type f -exec cp -n {} dist/ \;
+          (cd dist && sha256sum -- *) > manifest/SHA256SUMS
+          (cd crate && sha256sum -- *.crate) > manifest/CRATE.SHA256
+          {
+            echo "VERSION=${VERSION}"
+            echo "COMMIT=${GITHUB_SHA}"
+            echo "RUST=${RUST}"
+          } > manifest/release.env
+          cat manifest/*
+
+      - name: Upload the manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-manifest
+          path: manifest/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    runs-on: ubuntu-latest
+    needs: guard
+    if: needs.guard.outputs.kind == 'release' || needs.guard.outputs.kind == 'recover'
+    concurrency:
+      group: release-flow-production-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the candidate run's manifest
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ needs.guard.outputs.candidate_run }}
+          github-token: ${{ github.token }}
+          name: release-manifest
+          path: ${{ runner.temp }}/manifest
+
+      - name: Download the candidate run's assets
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ needs.guard.outputs.candidate_run }}
+          github-token: ${{ github.token }}
+          pattern: dist-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/dist
+
+      - name: Check the assets against the manifest
+        shell: bash
+        env:
+          TAG_VERSION: ${{ needs.guard.outputs.version }}
+          TAG_COMMIT: ${{ needs.guard.outputs.commit }}
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}"
+          . manifest/release.env
+          if [[ "${VERSION}" != "${TAG_VERSION}" || "${COMMIT}" != "${TAG_COMMIT}" ]]; then
+            echo "::error::The candidate manifest is for ${VERSION} at ${COMMIT}, not ${TAG_VERSION} at ${TAG_COMMIT}."
+            exit 1
+          fi
+          (cd dist && sha256sum -c ../manifest/SHA256SUMS)
+          cp manifest/SHA256SUMS dist/
+
+      - name: Write the release notes
+        shell: bash
+        env:
+          TAG: ${{ needs.guard.outputs.tag }}
+        run: |
+          set -euo pipefail
+          previous="$(git describe --tags --abbrev=0 --match '[0-9]*.[0-9]*.[0-9]*' "refs/tags/${TAG}^" 2>/dev/null || true)"
+          range="refs/tags/${TAG}"
+          [[ -z "${previous}" ]] || range="${previous}..refs/tags/${TAG}"
+          changes="$(git log --no-merges --format='- %s (%h)' "${range}" || true)"
+          {
+            echo "## Changes"
+            echo
+            echo "${changes:-- Release ${TAG}}"
+            if [[ -n "${previous}" ]]; then
+              echo
+              echo "**Full changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${previous}...${TAG}"
+            fi
+            echo
+            echo "## Verify checksums"
+            echo '```sh'
+            echo 'sha256sum --check SHA256SUMS'
+            echo '```'
+          } > "${RUNNER_TEMP}/notes.md"
+
+      - name: Is this the latest release
+        id: latest
+        uses: ./.github/actions/release-is-latest
+        with:
+          tag: ${{ needs.guard.outputs.tag }}
+          token: ${{ github.token }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.guard.outputs.tag }}
+        run: |
+          latest_flag=""
+          if [[ "${{ steps.latest.outputs.latest }}" == "true" ]]; then
+            latest_flag="--latest"
+          fi
+          gh release create "${TAG}" ${latest_flag} \
+            --title "${TAG}" \
+            --notes-file "${RUNNER_TEMP}/notes.md" \
+            "${RUNNER_TEMP}/dist/"*
+
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs:
+      - guard
+      - release
+    if: needs.guard.outputs.kind == 'release' || needs.guard.outputs.kind == 'recover'
+    concurrency:
+      group: release-flow-crates-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.guard.outputs.tag }}
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: ./.github/actions/rust-toolchain
+
+      - name: Publish to crates.io
+        run: cargo publish

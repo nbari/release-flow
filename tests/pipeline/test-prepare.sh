@@ -170,4 +170,53 @@ branch_count="$(git branch --list 'release/*' | wc -l)"
 assert_eq "1" "${branch_count}" "P11: local candidate branch preserved"
 cd "${orig_dir}"
 
+t_case "P12: Interrupt signal (SIGTERM) cleanup"
+repo="$(tf_fixture_repo "prepare-sigterm")"
+cd "${repo}"
+STUB_FAULT=sigterm t_run_group bash "${ROOT}/scripts/release-prepare.sh" patch
+assert_rc nonzero "P12: interrupted run exits non-zero"
+wt_count="$(git worktree list --porcelain | grep -c '^worktree ')"
+assert_eq "1" "${wt_count}" "P12: worktree cleaned up after SIGTERM"
+branch_count="$(git branch --list 'release/*' | wc -l)"
+assert_eq "0" "${branch_count}" "P12: no branch created after SIGTERM"
+cd "${orig_dir}"
+
+t_case "P13: Adapter noop failure detection"
+repo="$(tf_fixture_repo "prepare-noop")"
+cd "${repo}"
+STUB_FAULT=noop t_run bash "${ROOT}/scripts/release-prepare.sh" patch
+assert_rc 1 "P13: rejected noop adapter"
+assert_contains "${T_ERR}" "Adapter failed to apply version" "P13: detects unchanged version"
+cd "${orig_dir}"
+
+t_case "P14: Adapter undeclared changes detection"
+repo="$(tf_fixture_repo "prepare-undeclared")"
+cd "${repo}"
+STUB_FAULT=undeclared t_run bash "${ROOT}/scripts/release-prepare.sh" patch
+assert_rc 1 "P14: rejected undeclared adapter changes"
+assert_contains "${T_ERR}" "Adapter changed undeclared files" "P14: detects stray files"
+cd "${orig_dir}"
+
+t_case "P15: Repeated preparation of the same version"
+repo="$(tf_fixture_repo "prepare-repeat")"
+cd "${repo}"
+t_run bash "${ROOT}/scripts/release-prepare.sh" patch
+assert_rc 0 "P15: first prepare succeeded"
+t_run bash "${ROOT}/scripts/release-prepare.sh" patch
+assert_rc 1 "P15: repeated prepare rejected"
+assert_contains "${T_ERR}" "Branch collision" "P15: rejects branch collision on repeated prepare"
+cd "${orig_dir}"
+
+t_case "P16: Concurrent candidate attempts"
+repo="$(tf_fixture_repo "prepare-concurrent")"
+cd "${repo}"
+git_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+wt_root="${git_dir}/release-flow/worktrees"
+mkdir -p "${wt_root}/.prepare.lock"
+t_run bash "${ROOT}/scripts/release-prepare.sh" patch
+assert_rc 1 "P16: rejected concurrent prepare attempt"
+assert_contains "${T_ERR}" "Concurrent candidate preparation in progress" "P16: names concurrency lock"
+rmdir "${wt_root}/.prepare.lock"
+cd "${orig_dir}"
+
 t_finish

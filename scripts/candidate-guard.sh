@@ -164,11 +164,18 @@ else
   fi
 fi
 
-# 7. Release tag collision check
+# 7. Release tag collision check (local and remote)
 if git rev-parse --verify "refs/tags/${branch_version}" >/dev/null 2>&1 || \
    git rev-parse --verify "refs/tags/v${branch_version}" >/dev/null 2>&1; then
-  echo "Conflicting release tag already exists for version ${branch_version}" >&2
+  echo "Conflicting local release tag already exists for version ${branch_version}" >&2
   exit 1
+fi
+
+if remote_tags="$(git ls-remote --tags --refs "${config_remote}" 2>/dev/null)"; then
+  if printf '%s\n' "${remote_tags}" | awk '{print $2}' | grep -qE "refs/tags/(v)?${branch_version}$"; then
+    echo "Conflicting remote release tag already exists on '${config_remote}' for version ${branch_version}" >&2
+    exit 1
+  fi
 fi
 
 # Output key=value lines

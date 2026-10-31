@@ -180,4 +180,37 @@ t_run bash "${ROOT}/scripts/candidate-manifest.sh" \
   --run-id "100" --run-attempt 1 --source-date-epoch 1700000000 --adapter "tools/adapter.sh"
 assert_rc 1 "M8: rejected directory containing subdirectories"
 
+t_case "M9: Adapter packaging fault injection (missing and extra artifacts)"
+s9="${TF_TMP}/s9"
+mkdir -p "${s9}"
+printf '0.1.0\n' > "${s9}/VERSION"
+export SOURCE_DATE_EPOCH=1700000000
+pushd "${s9}" >/dev/null
+STUB_FAULT=package-missing t_run bash "${ROOT}/tests/pipeline/fixtures/stub-adapter.sh" package "0.1.0" "${s9}/out1"
+assert_rc 0 "M9: package-missing adapter ran"
+inv_tmp="${s9}/inv.json"
+bash "${ROOT}/tests/pipeline/fixtures/stub-adapter.sh" inventory "0.1.0" > "${inv_tmp}"
+popd >/dev/null
+t_run bash "${ROOT}/scripts/candidate-manifest.sh" \
+  --dir "${s9}/out1" --inventory "${inv_tmp}" \
+  --project "demo" --repository "example/demo" \
+  --version "0.1.0" --mode "production" \
+  --base-branch "develop" --base-commit "${BASE}" \
+  --candidate-branch "release/0.1.0-000000000000" --candidate-commit "${COMMIT}" \
+  --run-id "100" --run-attempt 1 --source-date-epoch 1700000000 --adapter "tools/adapter.sh"
+assert_rc 1 "M9: manifest generator caught missing packaged artifact"
+
+pushd "${s9}" >/dev/null
+STUB_FAULT=package-extra t_run bash "${ROOT}/tests/pipeline/fixtures/stub-adapter.sh" package "0.1.0" "${s9}/out2"
+assert_rc 0 "M9: package-extra adapter ran"
+popd >/dev/null
+t_run bash "${ROOT}/scripts/candidate-manifest.sh" \
+  --dir "${s9}/out2" --inventory "${inv_tmp}" \
+  --project "demo" --repository "example/demo" \
+  --version "0.1.0" --mode "production" \
+  --base-branch "develop" --base-commit "${BASE}" \
+  --candidate-branch "release/0.1.0-000000000000" --candidate-commit "${COMMIT}" \
+  --run-id "100" --run-attempt 1 --source-date-epoch 1700000000 --adapter "tools/adapter.sh"
+assert_rc 1 "M9: manifest generator caught extra stray packaged file"
+
 t_finish

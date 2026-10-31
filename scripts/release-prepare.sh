@@ -97,12 +97,20 @@ fi
 # 3. Worktree root and concurrency check
 git_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
 WT_ROOT="${RELEASE_FLOW_WORKTREE_ROOT:-${git_dir}/release-flow/worktrees}"
+LOCK_DIR="${WT_ROOT}/.prepare.lock"
+
+mkdir -p "${WT_ROOT}"
+if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+  echo "Concurrent candidate preparation in progress (lock held: ${LOCK_DIR})" >&2
+  exit 1
+fi
 
 git worktree prune
 
-if git worktree list --porcelain | grep -q "^worktree ${WT_ROOT}"; then
+if git worktree list --porcelain | grep -q "^worktree ${WT_ROOT}/wt\."; then
   echo "Existing active or stale candidate worktree detected under ${WT_ROOT}." >&2
   echo "Clean up with: git worktree remove --force <path> && git worktree prune" >&2
+  rmdir "${LOCK_DIR}" 2>/dev/null || true
   exit 1
 fi
 
@@ -141,6 +149,7 @@ cleanup() {
     git worktree remove --force "${wt}" 2>/dev/null || rm -rf "${wt}"
   fi
   git worktree prune 2>/dev/null || true
+  rmdir "${LOCK_DIR}" 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'exit 130' INT

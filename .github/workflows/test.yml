@@ -1,0 +1,98 @@
+---
+name: Test
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-toolchain
+        with:
+          components: rustfmt
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+  lint:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-toolchain
+        with:
+          components: clippy
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features --locked
+
+  check:
+    name: Feature Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-toolchain
+
+      - name: Check minimal feature set
+        run: cargo check --locked
+
+      - name: Check all features
+        run: cargo check --all-features --locked
+
+  pipeline:
+    name: Pipeline Self-Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-toolchain
+      - name: Pipeline tests
+        run: |
+          if [[ -f tests/pipeline/run.sh ]]; then
+            bash tests/pipeline/run.sh
+          fi
+
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        rust:
+          - stable
+    runs-on: ${{ matrix.os }}
+    needs:
+      - format
+      - lint
+      - check
+      - pipeline
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-toolchain
+
+      - name: Test minimal feature set
+        run: cargo test --locked
+
+      - name: Test all features
+        run: cargo test --all-features --locked

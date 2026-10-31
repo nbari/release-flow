@@ -71,7 +71,7 @@ git tag "0.1.1"
 
 t_run bash "${guard}" --ref "${cand_branch}" --commit "${cand_sha}"
 assert_rc 1 "G5: rejected when tag exists"
-assert_contains "${T_ERR}" "Conflicting release tag already exists" "G5: tag collision reported"
+assert_contains "${T_ERR}" "Conflicting local release tag already exists" "G5: tag collision reported"
 cd "${orig_dir}"
 
 t_finish

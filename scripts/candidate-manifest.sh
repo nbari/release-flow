@@ -130,8 +130,8 @@ if [[ -n "${extra_files}" ]]; then
   exit 1
 fi
 
-# Extract build_info.tools from inventory
-tools_json="$(jq '.build_info.tools // {}' "${inventory}")"
+# Extract build_info from inventory
+base_build_info="$(jq '.build_info // {}' "${inventory}")"
 
 # Compute sizes and digests
 artifacts_json="[]"
@@ -174,7 +174,7 @@ jq -n \
   --argjson run_attempt "${run_attempt}" \
   --arg adapter "${adapter}" \
   --argjson source_date_epoch "${source_date_epoch}" \
-  --argjson tools "${tools_json}" \
+  --argjson base_build_info "${base_build_info}" \
   --argjson artifacts "${artifacts_json}" \
   '{
     schema_version: $schema_version,
@@ -188,11 +188,11 @@ jq -n \
     candidate_commit: $candidate_commit,
     run_id: $run_id,
     run_attempt: $run_attempt,
-    build_info: {
+    build_info: ($base_build_info + {
       adapter: $adapter,
       source_date_epoch: $source_date_epoch,
-      tools: $tools
-    },
+      tools: ($base_build_info.tools // {})
+    }),
     artifacts: $artifacts
   }' > "${manifest_path}"
 
