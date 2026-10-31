@@ -14,6 +14,7 @@ assert_rc 0 "P1: prepare patch succeeded"
 assert_contains "${T_OUT}" "version=0.1.1" "P1: version is 0.1.1"
 assert_contains "${T_OUT}" "mode=production" "P1: mode is production"
 assert_contains "${T_OUT}" "pushed=false" "P1: pushed is false"
+assert_eq "0" "$(printf '%s\n' "${T_OUT}" | grep -cvE '^[a-z_]+=' || true)" "P1: every stdout line is key=value"
 
 # Verify git state
 base_sha="$(git rev-parse refs/remotes/origin/develop)"
@@ -40,6 +41,7 @@ assert_rc 0 "P2: test-only prepare succeeded"
 assert_contains "${T_OUT}" "version=0.2.0" "P2: version is 0.2.0"
 assert_contains "${T_OUT}" "mode=test-only" "P2: mode is test-only"
 assert_contains "${T_OUT}" "pushed=true" "P2: pushed is true"
+assert_eq "0" "$(printf '%s\n' "${T_OUT}" | grep -cvE '^[a-z_]+=' || true)" "P2: every stdout line is key=value (no push porcelain)"
 
 base_sha="$(git rev-parse refs/remotes/origin/sandbox)"
 base12="${base_sha:0:12}"
@@ -217,6 +219,42 @@ t_run bash "${ROOT}/scripts/release-prepare.sh" patch
 assert_rc 1 "P16: rejected concurrent prepare attempt"
 assert_contains "${T_ERR}" "Concurrent candidate preparation in progress" "P16: names concurrency lock"
 rmdir "${wt_root}/.prepare.lock"
+cd "${orig_dir}"
+
+t_case "P17: Expected base commit validation"
+repo="$(tf_fixture_repo "prepare-expect-base")"
+cd "${repo}"
+t_run bash "${ROOT}/scripts/release-prepare.sh" patch --mode test-only --expect-base-commit zzz
+assert_rc 2 "P17: malformed --expect-base-commit is a usage error"
+assert_eq "absent" "$(test -e "$(git rev-parse --path-format=absolute --git-common-dir)/release-flow" && echo present || echo absent)" \
+  "P17: usage error runs before any Git state is created"
+git checkout main --quiet
+main_sha="$(git rev-parse HEAD)"
+git checkout sandbox --quiet
+t_run bash "${ROOT}/scripts/release-prepare.sh" patch --mode test-only --expect-base-commit "${main_sha}"
+assert_rc 1 "P17: mismatched expected base rejected"
+assert_contains "${T_ERR}" "Base mismatch" "P17: names base mismatch"
+assert_eq "0" "$(git for-each-ref refs/heads/release | wc -l | tr -d ' ')" "P17: no candidate branch created"
+assert_eq "" "$(git ls-remote --heads origin 'refs/heads/release/*')" "P17: nothing pushed"
+sandbox_sha="$(git rev-parse HEAD)"
+t_run bash "${ROOT}/scripts/release-prepare.sh" patch --mode test-only --expect-base-commit "${sandbox_sha}"
+assert_rc 0 "P17: matching expected base accepted"
+cd "${orig_dir}"
+
+t_case "P18: Lock released after early failure"
+repo="$(tf_fixture_repo "prepare-lock-release")"
+cd "${repo}"
+git checkout develop --quiet
+echo "unpushed develop work" >> README.md
+git commit -am "Local develop commit" --quiet
+t_run bash "${ROOT}/scripts/release-prepare.sh" patch --mode production
+assert_rc 1 "P18: refused when base branch has unpushed commits"
+assert_contains "${T_ERR}" "has unpushed commits" "P18: explains unpushed commits"
+lock_dir="$(git rev-parse --path-format=absolute --git-common-dir)/release-flow/worktrees/.prepare.lock"
+assert_eq "absent" "$(test -e "${lock_dir}" && echo present || echo absent)" "P18: lock released after failure"
+git push origin develop --quiet
+t_run bash "${ROOT}/scripts/release-prepare.sh" patch --mode production
+assert_rc 0 "P18: retry succeeds after pushing the base"
 cd "${orig_dir}"
 
 t_finish

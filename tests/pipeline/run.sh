@@ -5,12 +5,21 @@ set -euo pipefail
 test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Verify required tools are available
-for tool in git jq sha256sum tar gzip setsid awk; do
+for tool in git jq sha256sum tar gzip setsid awk just; do
   if ! command -v "${tool}" >/dev/null 2>&1; then
     echo "Missing required test tool: ${tool}" >&2
     exit 1
   fi
 done
+
+# The deploy module needs source_directory() and [group], both from just 1.27.0.
+just_version="$(just --version | awk '{print $2}')"
+IFS='.' read -r just_major just_minor _ <<< "${just_version}"
+if [[ ! "${just_major}" =~ ^[0-9]+$ || ! "${just_minor}" =~ ^[0-9]+$ ]] || \
+   (( just_major < 1 || (just_major == 1 && just_minor < 27) )); then
+  echo "just >= 1.27.0 required (found: ${just_version:-unknown})" >&2
+  exit 1
+fi
 
 suite_failures=0
 suite_count=0

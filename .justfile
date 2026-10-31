@@ -1,3 +1,5 @@
+import '.justfiles/deploy.just'
+
 default: test
     @just --list
 

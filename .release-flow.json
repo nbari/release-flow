@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project": "release-flow",
-  "adapter": "scripts/adapters/cargo.sh",
+  "adapter": "scripts/adapters/release-flow.sh",
   "remote": "origin",
   "production_base": "develop",
   "test_base": "sandbox"

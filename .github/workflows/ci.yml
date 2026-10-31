@@ -40,6 +40,9 @@ jobs:
       - name: Tests
         run: cargo test --locked --workspace --all-features
 
+      - name: Install just (pinned, checksum-verified)
+        run: bash tests/pipeline/ci-install-just.sh
+
       - name: Release-pipeline failure tests
         run: bash tests/pipeline/run.sh
 

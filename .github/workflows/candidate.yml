@@ -69,6 +69,10 @@ jobs:
       - name: Release-pipeline self-tests
         run: |
           if [[ -f tests/pipeline/run.sh ]]; then
+            if [[ -f tests/pipeline/ci-install-just.sh ]]; then
+              bash tests/pipeline/ci-install-just.sh
+              export PATH="${RUNNER_TEMP}/just-bin:${PATH}"
+            fi
             bash tests/pipeline/run.sh
           fi
 

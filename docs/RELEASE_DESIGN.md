@@ -33,7 +33,8 @@ For immutable GitHub Releases, stage assets in a draft, verify the complete chec
 ## Milestone 1: Candidate preparation and verification
 
 `PREPARED` and `VALIDATED` are now fully implemented and automated:
-- Candidate preparation runs in an isolated Git worktree via `just release-prepare` (`scripts/release-prepare.sh`).
+- `just deploy` / `deploy-minor` / `deploy-major` (`.justfiles/deploy.just` → `scripts/release-deploy.sh`) is the primary entry point. The current branch selects the policy: `test_base` → test-only candidate, `production_base` → production candidate. `main`, `release/*`, a detached HEAD and every other branch are rejected (exit 3) with read-only checks only, so a rejection never changes Git state. Accepted deploys require local `HEAD` to equal the freshly fetched remote base (`--expect-base-commit`), so the commit you are on is exactly the commit released.
+- Candidate preparation runs in an isolated Git worktree via `scripts/release-prepare.sh` (also exposed as `just release-prepare`).
 - The version bump happens inside the worktree through the project adapter, creating a versioned candidate commit `C` with release trailers (`Release-Version`, `Release-Mode`, `Release-Base-Branch`, `Release-Base-Commit`).
 - Base integration branches (`develop` or `sandbox`) and local checkouts remain completely untouched.
 - Pushing the candidate branch (`release/**`) triggers `.github/workflows/candidate.yml`, which verifies candidate identity in `guard`, executes project tests and packaging in the same run, writes a versioned `manifest.json` (v1) and `SHA256SUMS`, and downloads and independently verifies the artifacts.

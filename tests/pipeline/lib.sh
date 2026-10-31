@@ -21,6 +21,8 @@ export GIT_AUTHOR_EMAIL="tester@example.com"
 export GIT_COMMITTER_NAME="Pipeline Tester"
 export GIT_COMMITTER_EMAIL="tester@example.com"
 unset GIT_DIR GIT_WORK_TREE
+# Outside just settings must not leak into fixture runs.
+unset JUST_JUSTFILE JUST_WORKING_DIRECTORY
 export LC_ALL=C
 
 T_PASSED=0
@@ -108,8 +110,11 @@ t_finish() {
   exit 0
 }
 
+# tf_fixture_repo name [version] [setup_fn]
+# setup_fn runs inside the clone after the fixture files are written and before
+# they are committed on main, so its files reach main, develop and sandbox.
 tf_fixture_repo() {
-  local name="$1" version="${2:-0.1.0}"
+  local name="$1" version="${2:-0.1.0}" setup_fn="${3:-}"
   local bare_dir="${TF_TMP}/${name}.git"
   local clone_dir="${TF_TMP}/${name}"
 
@@ -133,6 +138,9 @@ tf_fixture_repo() {
   "test_base": "sandbox"
 }
 EOF
+    if [[ -n "${setup_fn}" ]]; then
+      "${setup_fn}" >&2
+    fi
     git add .
     git commit -m "Initial commit on main" --quiet
     git push origin main --quiet
@@ -153,16 +161,64 @@ EOF
   printf '%s' "${clone_dir}"
 }
 
+# Vendors the deploy module and scripts from ${ROOT} into the current fixture
+# directory (use as a tf_fixture_repo setup_fn).
+tf_vendor_deploy() {
+  mkdir -p .justfiles scripts
+  cp "${ROOT}/.justfiles/deploy.just" .justfiles/deploy.just
+  cp "${ROOT}/scripts/release-deploy.sh" scripts/release-deploy.sh
+  cp "${ROOT}/scripts/release-prepare.sh" scripts/release-prepare.sh
+  cat <<'EOF' > .justfile
+import '.justfiles/deploy.just'
+
+default:
+    @echo root-default
+EOF
+}
+
+# Puts failing cargo/rustc/rustup shims first on PATH; every invocation is
+# recorded in ${TF_TMP}/forbidden-tools.log.
+tf_forbid_toolchains() {
+  local shim_dir="${TF_TMP}/shims" tool
+  mkdir -p "${shim_dir}"
+  for tool in cargo rustc rustup; do
+    cat <<EOF > "${shim_dir}/${tool}"
+#!/usr/bin/env bash
+printf '%s\n' "${tool}" >> "${TF_TMP}/forbidden-tools.log"
+exit 127
+EOF
+    chmod +x "${shim_dir}/${tool}"
+  done
+  PATH="${shim_dir}:${PATH}"
+  export PATH
+}
+
 tf_snapshot() {
   local repo="$1"
   (
     cd "${repo}"
     printf '=== REFS ===\n'
-    git for-each-ref refs/heads refs/tags --format='%(refname) %(objectname)' | sort
+    git for-each-ref --format='%(refname) %(objectname)' | sort
     printf '=== HEAD ===\n'
     git symbolic-ref -q HEAD || git rev-parse HEAD
     printf '=== STATUS ===\n'
     git status --porcelain
+    printf '=== STASH ===\n'
+    git stash list
+    printf '=== FETCH_HEAD ===\n'
+    local fetch_head
+    fetch_head="$(git rev-parse --path-format=absolute --git-path FETCH_HEAD)"
+    if [[ -f "${fetch_head}" ]]; then
+      sha256sum "${fetch_head}" | awk '{print $1}'
+    else
+      printf 'absent\n'
+    fi
+    printf '=== RELEASE-FLOW DIR ===\n'
+    if [[ -e "$(git rev-parse --path-format=absolute --git-common-dir)/release-flow" ]]; then
+      printf 'present\n'
+    else
+      printf 'absent\n'
+    fi
     printf '=== WORKTREES ===\n'
     git worktree list --porcelain | grep '^worktree ' | sort
     printf '=== LS-REMOTE ===\n'

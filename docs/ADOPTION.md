@@ -6,17 +6,59 @@ This document describes how to adopt `release-flow` in any project, regardless o
 
 ---
 
-## 1. Quick start: what to copy into your repository
+## 1. Quick start: install with the versioned bundle
 
-Copy the following files into your project:
+release-flow ships as `release-flow-bundle-<V>.tar.gz`. Every validated release-flow candidate includes it as an artifact, and you can build it from a checkout of this repository (GNU tar required):
 
-1. **`.release-flow.json`** (at your repository root).
-2. **`scripts/release-prepare.sh`** — isolated candidate preparation.
-3. **`scripts/candidate-guard.sh`** — CI identity and trailer guard.
-4. **`scripts/candidate-manifest.sh`** — candidate manifest and SHA256SUMS generator.
-5. **`scripts/verify-candidate.sh`** — independent artifact inventory and checksum verifier.
-6. **`.github/workflows/candidate.yml`** — the GitHub Actions candidate pipeline.
-7. An **adapter script** implementing the Adapter Protocol v1 (e.g. `scripts/adapters/cargo.sh` or a custom script).
+```bash
+bash scripts/release-flow-bundle.sh --version <V> --out dist
+```
+
+Install it into your repository (run from your repository root):
+
+```bash
+tar -xzf release-flow-bundle-<V>.tar.gz
+bash release-flow-bundle-<V>/install.sh --target .                       # add --with-cargo-adapter for Rust projects
+```
+
+Then:
+
+1. Add the import as the first line of your root justfile (`.justfile`, `justfile` or `Justfile`):
+
+   ```just
+   import '.justfiles/deploy.just'
+   ```
+
+2. Create `.release-flow.json` (§2), e.g. `cp release-flow-bundle-<V>/docs/release-flow.example.json .release-flow.json`, and point `adapter` at your project adapter (§3).
+3. Review and commit the installed files, including `.release-flow-bundle.json`, then push them to both base branches.
+
+The installer copies these files into your repository:
+
+| Path | Purpose |
+|---|---|
+| `.justfiles/deploy.just` | `just deploy`, `deploy-minor`, `deploy-major` |
+| `scripts/release-deploy.sh` | Branch-aware deploy orchestrator |
+| `scripts/release-prepare.sh` | Isolated candidate preparation |
+| `scripts/candidate-guard.sh` | CI identity and trailer guard |
+| `scripts/candidate-manifest.sh` | Candidate manifest and `SHA256SUMS` generator |
+| `scripts/verify-candidate.sh` | Independent artifact inventory and checksum verifier |
+| `.github/workflows/candidate.yml` | GitHub Actions candidate pipeline |
+| `scripts/adapters/cargo.sh` | Cargo reference adapter (only with `--with-cargo-adapter`) |
+
+The installer verifies every bundle file against `BUNDLE.json` first, plans every change before writing anything, and refuses to overwrite files it did not install or that you modified. It rejects symlinked destinations, symlinked parent directories, and non-regular lock files as conflicts. It never edits your justfile or `.release-flow.json` and never runs Git write commands. Exit codes: `0` ok, `1` conflict/drift/checksum mismatch, `2` usage error or the target is not a Git work-tree root.
+
+### Upgrading and checking for drift
+
+```bash
+bash release-flow-bundle-<V2>/install.sh --target . --upgrade   # replace files you have not modified
+bash release-flow-bundle-<V>/install.sh --target . --check      # read-only: compare installed files with the lock
+```
+
+`--upgrade` overwrites only files whose content still matches `.release-flow-bundle.json`, and deletes files the new bundle no longer ships only if they are unmodified. Any locally modified file is reported as a conflict and nothing is written. Without `--upgrade`, installing a different version exits `1` with `already installed <v>; use --upgrade`.
+
+### Manual installation (fallback)
+
+Without the bundle, copy the files in the table above from this repository, plus `.release-flow.json` and an adapter script implementing the Adapter Protocol v1 (§3). You then have to track upgrades yourself.
 
 ---
 
@@ -152,26 +194,73 @@ Release candidates are created in **isolated Git worktrees** without altering yo
 | `production` | `develop` (default) | `release/<version>-<base12>` | **Yes** (in Milestone 2) |
 | `test-only` | `sandbox` (default) | `release/test/<version>-<base12>` | **Never** (rejected by design) |
 
-### Preparing a Candidate
+### Deploy module: `just deploy`
+
+`.justfiles/deploy.just` adds three top-level recipes to the importing justfile:
 
 ```bash
-# Production candidate based on develop:
-just release-prepare patch
-just release-prepare minor
-just release-prepare major
+just deploy         # patch
+just deploy-minor   # minor
+just deploy-major   # major
+```
 
-# Test-only candidate based on sandbox (with automatic push to CI):
+The branch you are on selects the policy; there is no `--mode` flag:
+
+| Current branch | Result |
+|---|---|
+| `test_base` | Test-only candidate `release/test/X.Y.Z-<base12>` (never promotable) |
+| `production_base` | Production candidate `release/X.Y.Z-<base12>` |
+| `main` | Rejected: `main` only receives guarded release promotion |
+| `release/*` | Rejected: candidates are immutable and never a deploy base |
+| Detached HEAD | Rejected: policy is selected by branch |
+| Any other branch | Rejected, naming the allowed branches |
+
+Exit codes (from `scripts/release-deploy.sh`):
+
+| Code | Meaning |
+|---|---|
+| `0` | Candidate prepared and pushed |
+| `1` | Configuration, prerequisite, precondition or preparation failure |
+| `2` | Usage error |
+| `3` | Branch policy rejection |
+
+Guarantees:
+
+- **Rejections change nothing in Git.** Branch and configuration checks use read-only Git commands only: no fetch, no lock, no files under `.git`.
+- **Accepted branches fetch the base and push only a `release/**` branch** (create-only). A failure after the fetch can leave the updated `refs/remotes/<remote>/<base>` and the `.git/release-flow/` directory behind, but never a partial candidate on the remote or a held lock.
+- **The commit you are on is the commit released.** Local `HEAD` must equal the freshly fetched remote base: unpushed commits fail with `has unpushed commits`, a branch behind its remote fails with `Base mismatch` (pull, then retry).
+- The working tree must be clean, the version tag must not exist, and the candidate branch must not exist locally or on the remote (running `just deploy` twice on the same base gives `Branch collision`).
+- No language toolchain is needed by deploy itself; only your adapter's `version` and `set-version` run.
+
+On success, stdout carries `project`, `version`, `mode`, `base_branch`, `base_commit`, `candidate_branch`, `candidate_commit`, `pushed`, `remote` and `ci_url` (a GitHub Actions link when the remote is on github.com, otherwise empty) as `key=value` lines; a human summary goes to stderr. The local candidate branch is kept; delete it with `git branch -D <candidate_branch>` when no longer needed.
+
+**Requirements:** just ≥ 1.27.0, bash (3.2 or newer), git ≥ 2.31, jq.
+
+**Running from subdirectories.** Recipes resolve the scripts relative to the module file and the repository from the root justfile's directory, so `just deploy` works from any nested directory, including ignored nested Git repositories, and regardless of `set working-directory`, `set no-cd`, `set shell`, `set positional-arguments` or `set export` in your justfile. Monorepos with nested justfiles: `just` uses the nearest justfile, so either run from the root or add `set fallback := true` to the nested justfile.
+
+**Recipe name collisions.** Imports share the root justfile's namespace. Delete any existing `deploy`, `deploy-minor` or `deploy-major` recipes (for example legacy recipes that bump, merge into `main` and tag) before adding the import; `just` reports duplicate recipes as an error. If your justfile sets `allow-duplicate-recipes`, your own recipe silently wins over the module, so check `just --show deploy`.
+
+### Low-level preparation
+
+`scripts/release-prepare.sh` remains available for explicit control (it is what `just deploy` calls):
+
+```bash
+# Production candidate based on develop (not pushed):
+just release-prepare patch
+
+# Test-only candidate based on sandbox, pushed to CI:
 just release-prepare patch --mode test-only --push
 ```
 
 The candidate preparation script:
 1. Verifies the working tree is clean.
-2. Checks for tag collisions (`X.Y.Z` or `vX.Y.Z`) locally and remotely.
-3. Creates a detached worktree under `.git/release-flow/worktrees/`.
-4. Runs the adapter's `set-version` inside the worktree.
-5. Creates an exact candidate commit with Git release trailers.
-6. Creates the `release/*` branch (create-only).
-7. Cleans up the temporary worktree automatically.
+2. Fetches the base branch and, with `--expect-base-commit <sha>`, requires it to equal that commit.
+3. Checks for tag collisions (`X.Y.Z` or `vX.Y.Z`) locally and remotely.
+4. Creates a detached worktree under `.git/release-flow/worktrees/`.
+5. Runs the adapter's `set-version` inside the worktree.
+6. Creates an exact candidate commit with Git release trailers.
+7. Creates the `release/*` branch (create-only) and optionally pushes it create-only.
+8. Cleans up the temporary worktree and its lock automatically, on success and on failure.
 
 ---
 
@@ -201,6 +290,8 @@ bash scripts/verify-candidate.sh \
 ## 7. Current Implementation Status
 
 - **Implemented and Tested:**
+  - Branch-aware deploy module (`.justfiles/deploy.just`, `scripts/release-deploy.sh`).
+  - Versioned distribution bundle and installer (`scripts/release-flow-bundle.sh`, `scripts/release-flow-install.sh`).
   - Worktree candidate preparation (`scripts/release-prepare.sh`).
   - Adapter protocol v1 and Cargo reference adapter (`scripts/adapters/cargo.sh`).
   - Versioned artifact manifest v1 generation (`scripts/candidate-manifest.sh`).

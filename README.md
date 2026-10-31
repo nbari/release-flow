@@ -210,19 +210,30 @@ The [Candidate workflow](.github/workflows/candidate.yml) is triggered automatic
 
 ### Preparing a candidate
 
-Candidates are prepared in an isolated Git worktree without modifying `develop`, `sandbox`, `main`, or your active checkout:
+The primary interface is `just deploy`. The branch you are on selects the policy; candidates are prepared in an isolated Git worktree without modifying `develop`, `sandbox`, `main`, or your active checkout, and pushing the `release/**` branch triggers the Candidate workflow:
 
 ```sh
-# Prepare a production candidate from develop:
-just release-prepare patch
-just release-prepare minor
-just release-prepare major
-
-# Prepare and push a test-only candidate based on sandbox:
-just release-prepare patch --mode test-only --push
+just deploy         # patch bump
+just deploy-minor   # minor bump
+just deploy-major   # major bump
 ```
 
-See [ADOPTION.md](docs/ADOPTION.md) for details on the adapter interface and adopting `release-flow` in other projects.
+| Current branch | Result |
+| --- | --- |
+| `test_base` (`sandbox`) | Test-only candidate `release/test/X.Y.Z-<base12>`, never promotable |
+| `production_base` (`develop`) | Production candidate `release/X.Y.Z-<base12>` |
+| `main`, `release/*`, detached HEAD, anything else | Rejected (exit 3) without any Git change |
+
+Your local branch must match its remote exactly (no unpushed or unpulled commits); the commit you are on is the commit that is released. On success, `key=value` lines (including `candidate_branch`, `candidate_commit` and a GitHub `ci_url`) are printed on stdout.
+
+The low-level preparation tool remains available for explicit control:
+
+```sh
+just release-prepare patch                          # production candidate from develop, not pushed
+just release-prepare patch --mode test-only --push  # test-only candidate from sandbox
+```
+
+See [ADOPTION.md](docs/ADOPTION.md) for the deploy module, the versioned installer bundle, the adapter interface, and adopting `release-flow` in other projects.
 
 ## Implementation progress
 
@@ -232,7 +243,8 @@ See [ADOPTION.md](docs/ADOPTION.md) for details on the adapter interface and ado
 | Worktree + versioned temporary candidate | **Implemented** | Isolated worktree preparation; no production ref changes |
 | Reusable adapter contract & Cargo reference | **Implemented** | Project-independent adapter protocol v1 |
 | Exact-SHA candidate pipeline & manifest v1 | **Implemented** | Same-run verification; pinned manifest hash; independent verifier |
-| Pipeline failure-injection test suite | **Implemented** | All 4 test suites pass in `just check` |
+| Pipeline failure-injection test suite | **Implemented** | All 6 test suites pass in `just check` |
+| Branch-aware `just deploy` + versioned bundle | **Implemented** | Branch policy, rejection-without-changes and bundle installer suites pass |
 | Atomic exact-SHA promotion + signed tag + rulesets | **Planned** | Race/stale-branch/partial-push tests pass |
 | Durable manifest + independent publishers | **Planned** | Retry one publisher without rebuilding or retagging |
 | Complete recovery / fault-injection suite | **Planned** | All failure scenarios demonstrated end-to-end |

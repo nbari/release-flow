@@ -63,6 +63,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/rust-toolchain
+      - name: Install just (pinned, checksum-verified)
+        run: |
+          if [[ -f tests/pipeline/ci-install-just.sh ]]; then
+            bash tests/pipeline/ci-install-just.sh
+          fi
       - name: Pipeline tests
         run: |
           if [[ -f tests/pipeline/run.sh ]]; then

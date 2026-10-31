@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF' >&2
-Usage: release-prepare.sh <patch|minor|major|X.Y.Z> [--mode production|test-only] [--base <branch>] [--push]
+Usage: release-prepare.sh <patch|minor|major|X.Y.Z> [--mode production|test-only] [--base <branch>] [--push] [--expect-base-commit <sha>]
 EOF
   exit 2
 }
@@ -19,6 +19,7 @@ shift
 mode="production"
 base_override=""
 do_push=false
+expect_base_commit=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +37,11 @@ while [[ $# -gt 0 ]]; do
       do_push=true
       shift
       ;;
+    --expect-base-commit)
+      [[ $# -ge 2 ]] || usage
+      expect_base_commit="$2"
+      shift 2
+      ;;
     *)
       usage
       ;;
@@ -50,6 +56,11 @@ fi
 # Validate bump token
 if [[ ! "${bump_token}" =~ ^(patch|minor|major|[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
   echo "Invalid bump token: ${bump_token} (expected patch, minor, major, or X.Y.Z)" >&2
+  exit 2
+fi
+
+if [[ -n "${expect_base_commit}" && ! "${expect_base_commit}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Invalid --expect-base-commit: ${expect_base_commit} (expected a 40-character lowercase hex commit id)" >&2
   exit 2
 fi
 
@@ -105,12 +116,24 @@ if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
   exit 1
 fi
 
+# The lock is held from here on: every exit path must release it.
+wt=""
+cleanup() {
+  if [[ -n "${wt}" && -d "${wt}" ]]; then
+    git worktree remove --force "${wt}" 2>/dev/null || rm -rf "${wt}"
+  fi
+  git worktree prune 2>/dev/null || true
+  rmdir "${LOCK_DIR}" 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 git worktree prune
 
 if git worktree list --porcelain | grep -q "^worktree ${WT_ROOT}/wt\."; then
   echo "Existing active or stale candidate worktree detected under ${WT_ROOT}." >&2
   echo "Clean up with: git worktree remove --force <path> && git worktree prune" >&2
-  rmdir "${LOCK_DIR}" 2>/dev/null || true
   exit 1
 fi
 
@@ -133,6 +156,11 @@ if git rev-parse --verify "refs/heads/${base_branch}" >/dev/null 2>&1; then
   fi
 fi
 
+if [[ -n "${expect_base_commit}" && "${base_sha}" != "${expect_base_commit}" ]]; then
+  echo "Base mismatch: local HEAD ${expect_base_commit:0:12} is not ${cfg_remote}/${base_branch} (${base_sha:0:12}). Pull or rebase onto ${cfg_remote}/${base_branch}, push, then retry." >&2
+  exit 1
+fi
+
 # 5. Remote state check
 if ! remote_tags="$(git ls-remote --tags --refs "${cfg_remote}")"; then
   echo "Failed to query remote tags from '${cfg_remote}'" >&2
@@ -142,20 +170,7 @@ if ! remote_heads="$(git ls-remote --heads "${cfg_remote}")"; then
   echo "Failed to query remote heads from '${cfg_remote}'" >&2
   exit 1
 fi
-# 6. Worktree setup with cleanup traps
-wt=""
-cleanup() {
-  if [[ -n "${wt}" && -d "${wt}" ]]; then
-    git worktree remove --force "${wt}" 2>/dev/null || rm -rf "${wt}"
-  fi
-  git worktree prune 2>/dev/null || true
-  rmdir "${LOCK_DIR}" 2>/dev/null || true
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-mkdir -p "${WT_ROOT}"
+# 6. Worktree setup (cleanup trap installed when the lock was taken)
 wt="$(mktemp -d "${WT_ROOT}/wt.XXXXXX")"
 git -c core.hooksPath=/dev/null worktree add --detach --quiet "${wt}" "${base_sha}"
 
@@ -237,7 +252,7 @@ else
   candidate_branch="release/test/${next_ver}-${base12}"
 fi
 
-if ! git check-ref-format --branch "${candidate_branch}"; then
+if ! git check-ref-format --branch "${candidate_branch}" >/dev/null; then
   echo "Invalid branch name generated: ${candidate_branch}" >&2
   exit 1
 fi
@@ -320,7 +335,8 @@ fi
 # 12. Optional push (create-only)
 pushed=false
 if [[ "${do_push}" == "true" ]]; then
-  if git push --porcelain --force-with-lease="refs/heads/${candidate_branch}:" "${cfg_remote}" "${candidate_sha}:refs/heads/${candidate_branch}"; then
+  # --porcelain ref status lines go to stderr: stdout carries only key=value output.
+  if git push --porcelain --force-with-lease="refs/heads/${candidate_branch}:" "${cfg_remote}" "${candidate_sha}:refs/heads/${candidate_branch}" >&2; then
     pushed=true
     echo "Candidate branch pushed to ${cfg_remote}/${candidate_branch}" >&2
   else

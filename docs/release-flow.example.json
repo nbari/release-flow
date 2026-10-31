@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "project": "my-service",
+  "adapter": "scripts/adapters/custom.sh",
+  "remote": "origin",
+  "production_base": "develop",
+  "test_base": "sandbox"
+}
