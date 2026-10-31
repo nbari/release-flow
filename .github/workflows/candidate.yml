@@ -1,0 +1,108 @@
+name: Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: candidate-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Verify validated commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require an allowed source branch
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "${REF}" != refs/heads/develop && "${REF}" != refs/heads/release/* ]]; then
+            echo "::error::Candidate must run on develop or release/*"
+            exit 1
+          fi
+
+      - name: Require successful CI on this exact commit and branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml \
+            --commit "${GITHUB_SHA}" --branch "${GITHUB_REF_NAME}" \
+            --event push --status success --limit 1 \
+            --json databaseId --jq '.[0].databaseId // empty')"
+          if [[ -z "${run_id}" ]]; then
+            echo "::error::No successful CI run for ${GITHUB_SHA} on ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+          echo "Validated by CI run ${run_id}; packaging ${GITHUB_SHA}."
+
+  build:
+    name: Build immutable candidate archive
+    needs: guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout the exact source commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package reproducible archive and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --locked --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "release-flow") | .version')"
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '::error::Expected stable X.Y.Z version'; exit 1; }
+          archive="release-flow-${version}-x86_64-unknown-linux-gnu.tar.gz"
+          mkdir -p dist/stage
+          cp target/release/release-flow LICENSE README.md dist/stage/
+          epoch="$(git log -1 --format=%ct)"
+          tar --sort=name --mtime="@${epoch}" --owner=0 --group=0 --numeric-owner \
+            -C dist/stage -cf - . | gzip -n > "dist/${archive}"
+          (cd dist && sha256sum "${archive}" > SHA256SUMS)
+          lock_sha256="$(sha256sum Cargo.lock | awk '{print $1}')"
+          rust_version="$(rustc --version)"
+          jq -n --arg version "${version}" --arg commit "${GITHUB_SHA}" \
+            --arg archive "${archive}" --arg lock_sha256 "${lock_sha256}" \
+            --arg rustc "${rust_version}" \
+            '{version: $version, commit: $commit, archive: $archive,
+              cargo_lock_sha256: $lock_sha256, rustc: $rustc}' > dist/manifest.json
+          rm -rf dist/stage
+          bash scripts/verify-candidate.sh dist "${GITHUB_SHA}"
+
+      - name: Upload candidate files (not a public release)
+        uses: actions/upload-artifact@v7
+        with:
+          name: candidate-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
+
+  verify:
+    name: Verify uploaded candidate
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout verifier
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download exactly this candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: candidate-${{ github.sha }}
+          path: candidate
+
+      - name: Verify checksum and source identity
+        run: bash scripts/verify-candidate.sh candidate "${GITHUB_SHA}"

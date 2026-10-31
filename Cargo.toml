@@ -1,0 +1,21 @@
+[package]
+name = "release-flow"
+version = "0.1.0"
+edition = "2024"
+description = "Read-only release inspection and a reference for independently recoverable release pipelines"
+license = "BSD-3-Clause"
+repository = "https://github.com/nbari/release-flow"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["std"] }
+semver = "1"
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[[bin]]
+name = "release-flow"
+path = "src/bin/release-flow.rs"

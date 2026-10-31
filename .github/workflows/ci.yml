@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [main, develop, sandbox, 'release/**']
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Rust and pipeline verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+
+      - name: Require committed Cargo.lock
+        run: test -f Cargo.lock || { echo '::error::Run cargo generate-lockfile and commit Cargo.lock'; exit 1; }
+
+      - name: Check format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked --workspace --all-features
+
+      - name: Candidate failure tests
+        run: bash tests/candidate-verification.sh
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: CLI smoke tests
+        run: |
+          ./target/release/release-flow --version
+          ./target/release/release-flow status --json
+          ./target/release/release-flow plan patch --json
+
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all verification jobs to succeed
+        env:
+          RESULT: ${{ needs.verify.result }}
+        run: |
+          if [[ "${RESULT}" != success ]]; then
+            echo "::error::Rust/pipeline verification is ${RESULT}"
+            exit 1
+          fi
