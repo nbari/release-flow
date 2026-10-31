@@ -6,7 +6,7 @@ The fundamental invariant is: **the commit that is promoted and tagged is exactl
 
 The owner commits freely to `sandbox` and submits squash PRs to protected `develop`. Other contributors also submit PRs to `develop`. `main` accepts only an authorized release promotion, never ordinary development pushes. Temporary `release/*` branches contain an explicit version-bump commit based on an integration commit. Promotion must reject a changed target, stale candidate, non-fast-forward update, missing CI, or mismatched artifact manifest. Release automation must not rewrite `sandbox`.
 
-## Proposed state machine
+## Release state machine
 
 A release candidate progresses through `PREPARED` → `VALIDATING` → `VALIDATED` → `PROMOTED`. Its independent publishers then report their own states (`pending`, `running`, `succeeded`, `failed`) for GitHub Release, OCI images, documentation, and Helm. `PUBLISHED` is a derived state only when all required publication channels have succeeded. An optional downstream failure must not erase `PROMOTED` or force another version bump.
 

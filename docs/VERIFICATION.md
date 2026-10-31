@@ -195,3 +195,64 @@ The public repository's own root Action and full CI also passed at the original
 implementation SHA: [run 41229497363](https://github.com/nbari/release-flow/actions/runs/41229497363).
 The native candidate above deliberately remains recorded as a failed attempt;
 it cannot be promoted. Fresh corrected-candidate results are recorded separately.
+
+### Corrected runtime and managed upgrade
+
+The corrected runtime is `b68d46e396c06897f0e64b760ae33a4430d07e8b`.
+Both required local gates passed again on the working checkout: 13 pipeline
+suites and 1,423 assertions, plus the 27 Rust unit and 8 CLI integration tests.
+The real `scripts/adapters/release-flow.sh verify` entrypoint also passed locally.
+
+The existing consumer upgraded through the real installer: 3 managed files
+updated, 30 unchanged, and `--check` reported zero drift. Configuration, caller
+pins and the remote Action reference were committed together. Both the
+[upgraded remote Action](https://github.com/nbari/release-flow-consumer-test-20261031/actions/runs/41230696836)
+and [upgraded candidate](https://github.com/nbari/release-flow-consumer-test-20261031/actions/runs/41230700222)
+passed on GitHub.
+
+The latter's source is `88a98ba2f94ca178e4cbcf10100e2eb33044a651`; runtime and
+referenced-workflow metadata identify `b68d46e396c06897f0e64b760ae33a4430d07e8b`.
+Its downloaded manifest independently verified with SHA-256
+`9bf3d4687a4545a43fdec033071e718fa51679cad28957fd7af9cc6c969fc474`.
+
+Restoring the old release workflow in a separate local mutation checkout made
+11 workflow-contract assertions fail (98 pass), including all five publisher
+selection gates. The current workflow contract passes 109 assertions. This
+complements the real unknown-channel rejection, rather than substituting a
+static check for execution.
+
+### Successful native candidate
+
+[Corrected exact-SHA CI](https://github.com/nbari/release-flow/actions/runs/41230669022)
+passed at `b68d46e396c06897f0e64b760ae33a4430d07e8b`.
+The fresh native test candidate
+`a95290ef7e4a0ea5747d0a5736ffa7eb3c61f4ba` passed
+[run 41230698283](https://github.com/nbari/release-flow/actions/runs/41230698283).
+All five packaging legs (Linux x86_64, Linux ARM64, macOS, Windows and
+platform-independent), full verification, assembly, independent download
+verification and `Candidate OK` succeeded. Durable retention was correctly
+skipped for test-only mode.
+
+All 11 downloaded artifacts independently verified: platform archives, Windows
+ZIP, Linux DEB/RPM, crate and distribution bundle. Manifest SHA-256:
+`4e34a503120d2d78c0ef22d79aa18a227b2dadd6a1e74db924e23f57f4c7493d`.
+The manifest runtime SHA equals the native candidate SHA. The actual bundle's
+`BUNDLE.json` reports that same source commit, version `0.1.1` and
+`source_tree_clean: true`. The bundle retains the default vendored mode;
+`--workflow-mode reusable` builds the separately tested thin-caller mode.
+
+These are test-only candidates, not public releases. Production storage,
+production promotion, real publisher destinations and Marketplace listing
+activation remain **NOT YET ACTIVATED**. The Marketplace Action's live runtime
+checks ran on Ubuntu; macOS Action execution and GHES were not exercised. Native
+macOS packaging did run successfully. Centralized workflows require github.com.
+
+| Capability | Evidence status |
+| --- | --- |
+| Root Marketplace Action validation | **IMPLEMENTED**, **TESTED LOCALLY**, **VERIFIED ON GITHUB** |
+| Reusable candidate and runtime/source provenance | **IMPLEMENTED**, **TESTED LOCALLY**, **VERIFIED ON GITHUB** |
+| Publisher selection and unknown-channel rejection | **IMPLEMENTED**, **TESTED LOCALLY**, **VERIFIED ON GITHUB** |
+| Independent production publishing, retention and atomic promotion | **IMPLEMENTED**, **TESTED LOCALLY**, **NOT YET ACTIVATED** for production |
+| Just deploy, shell adapter, bundle install and managed upgrade | **IMPLEMENTED**, **TESTED LOCALLY**, **VERIFIED ON GITHUB** |
+| Native multi-platform candidate and artifact verification | **IMPLEMENTED**, **TESTED LOCALLY**, **VERIFIED ON GITHUB** |
+| Marketplace agreement, name acceptance, categories and listing | **NOT YET ACTIVATED**; owner UI authorization required |
