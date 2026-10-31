@@ -159,7 +159,7 @@ t_run bash "${repo}/scripts/release-retry.sh" --project-dir "${repo}" 0.1.1 bogu
 assert_rc 2 "IN03: unknown channel exits 2"
 
 t_case "IN04: Bundle and workflow contract"
-assert_eq "35" "$(jq '.payload | length' "${TF_BUNDLE_ROOT}/BUNDLE.json")" "IN04: the bundle carries all 35 payload files"
+assert_eq "36" "$(jq '.payload | length' "${TF_BUNDLE_ROOT}/BUNDLE.json")" "IN04: the bundle carries all 36 payload files"
 missing=0
 while IFS= read -r p; do
   [[ -f "${TF_BUNDLE_ROOT}/payload/${p}" ]] || missing=$(( missing + 1 ))
@@ -167,7 +167,7 @@ done <<< "$(jq -r '.payload[].path' "${TF_BUNDLE_ROOT}/BUNDLE.json")"
 assert_eq "0" "${missing}" "IN04: every payload file is in the archive"
 cd "${TF_TMP}/in01"
 t_run just --list
-for recipe in deploy deploy-minor deploy-major release-promote release-status release-retry; do
+for recipe in deploy deploy-minor deploy-major release-promote release-status release-retry release-candidates release-prune; do
   assert_contains "${T_OUT}" "    ${recipe} " "IN04: installed justfile lists ${recipe}"
 done
 cd "${orig_dir}"
@@ -179,4 +179,30 @@ assert_eq "" "$(grep -rnE '^[[:space:]]*(source|\.)[[:space:]]' "${ROOT}/scripts
   | grep -vE ':[0-9]+:[[:space:]]*\.[[:space:]]+as[[:space:]]' \
   | grep -vE '/(lib|storage/backends)/[a-z0-9]+\.sh"$' || true)" "IN04: nothing but release-flow's own libraries is ever sourced"
 
+t_case "IN05: Real shell example through the installed candidate pipeline"
+# shellcheck disable=SC2329 # Called by tf_fixture_repo in a subshell.
+shell_setup() {
+  bash "${TF_BUNDLE_ROOT}/install.sh" --target . >/dev/null
+  cp -R "${ROOT}/examples/shell/." .
+  jq --arg uri "file://${TF_TMP}/hello-example-store" 'del(.pipeline) | .promotion.required_job="Candidate OK" | .storage.uri=$uri' \
+    .release-flow.json > shell-config.json
+  mv shell-config.json .release-flow.json
+  printf "import '.justfiles/deploy.just'\n" > .justfile
+}
+repo="$(tf_fixture_repo hello-example 0.1.0 shell_setup)"
+cd "$repo"
+git checkout --quiet develop
+tf_forbid_toolchains
+t_run just deploy
+assert_rc 0 'shell example deploys through installed Just'
+branch="$(kv "$T_OUT" candidate_branch)"; commit="$(kv "$T_OUT" candidate_commit)"
+assert_eq 0.1.0 "$(cat VERSION)" 'shell develop version remains unchanged'
+tf_candidate_ci "$repo" "$branch" "$commit"
+assert_eq hello "$(jq -r .project "$TF_DIST/manifest.json")" 'real shell manifest project'
+assert_eq "$commit" "$(jq -r .candidate_commit "$TF_DIST/manifest.json")" 'real shell candidate source'
+assert_eq hello-0.1.1.tar.gz "$(jq -r '.artifacts[].name' "$TF_DIST/manifest.json")" 'real shell inventory packaged'
+t_run bash "$repo/scripts/verify-candidate.sh" --dir "$TF_DIST" --commit "$commit" --manifest-sha256 "$TF_M"
+assert_rc 0 'installed verifier checks shell artifact bytes'
+assert_eq absent "$(exists "${TF_TMP}/forbidden-tools.log")" 'shell pipeline never invokes an application toolchain'
+cd "$orig_dir"
 t_finish

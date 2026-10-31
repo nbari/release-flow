@@ -122,3 +122,22 @@ version policy and exact metadata requirements; [VERIFICATION.md](VERIFICATION.m
 records local and actual GitHub execution evidence.
 
 GitHub-only deployments use [immutable release storage](GITHUB_STORAGE.md). The sealed storage prerelease is independent of public release publishing; a publisher outage never removes the retained source bytes. Only retention and publication jobs receive Contents write permission; build/test jobs retain read access.
+
+## Consumer interfaces and operational lifecycle
+
+The root composite `action.yml` supplies read-only step validation. Central
+`candidate.yml` and `release.yml` remain the multi-job engine. The versioned
+bundle supplies local Just operations and thin callers pinned to the same source
+revision. Application-specific logic lives in the six-command adapter. The Rust
+CLI remains a reference consumer. See [ADOPTION.md](ADOPTION.md),
+[branch lifecycle](BRANCHES.md) and [candidate management](CANDIDATES.md).
+
+Candidate discovery never executes project code. Cleanup defaults to dry-run,
+requires completed evidence and publication for production candidates, and uses
+atomic exact-ref leases after immediate evidence rechecks. It never removes
+version tags, retained bytes, release bindings or publication receipts.
+
+Explicit candidate and promotion pushes use `--no-follow-tags` so a local
+`push.followTags=true` preference cannot introduce unrelated signed tags into
+a release transaction. Root Marketplace publishing intentionally requests only
+GitHub Release; the optional crates.io publisher remains supported separately.

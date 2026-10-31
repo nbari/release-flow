@@ -65,6 +65,7 @@ scripts/publishers/docs.sh
 scripts/publishers/github-release.sh
 scripts/publishers/helm.sh
 scripts/publishers/oci.sh
+scripts/release-candidates.sh
 scripts/release-deploy.sh
 scripts/release-prepare.sh
 scripts/release-promote.sh
@@ -77,11 +78,14 @@ scripts/storage/ci-credentials.sh
 scripts/storage/github-bootstrap.sh
 scripts/storage/storage.sh
 scripts/verify-candidate.sh"
-PAYLOAD_COUNT=35
-SUPPORT_DOCS="docs/GITHUB_STORAGE.md
+PAYLOAD_COUNT=36
+SUPPORT_DOCS="docs/BRANCHES.md
+docs/CANDIDATES.md
+docs/GITHUB_STORAGE.md
 docs/MARKETPLACE.md
 docs/callers/candidate.yml
 docs/callers/release.yml
+examples/shell/README.md
 examples/shell/tools/adapter.sh
 examples/shell/VERSION
 examples/shell/app/hello.sh
@@ -378,6 +382,8 @@ assert_contains "${expected_names}" "release-flow-bundle-0.3.0.tar.gz" "B11: bun
 b11="$(extract_bundle "${dist}/release-flow-bundle-0.3.0.tar.gz" "${TF_TMP}/b11-x")"
 assert_eq "0.3.0" "$(jq -r .bundle_version "${b11}/BUNDLE.json")" "B11: bundle carries the package version"
 assert_eq "$(git rev-parse HEAD)" "$(jq -r .source_commit "${b11}/BUNDLE.json")" "B11: bundle built from the source HEAD"
+assert_eq "$(git rev-parse HEAD)" "$(jq -r .pipeline.sha "${b11}/examples/shell/.release-flow.json")" "B11: shell example matches bundle runtime"
+assert_eq reusable "$(jq -r .workflow_mode "${b11}/BUNDLE.json")" "B11: published bundles use central reusable workflows"
 t_run "${src}/scripts/adapters/release-flow.sh" package 0.3.0
 assert_rc 2 "B11: missing outdir is a usage error"
 SOURCE_DATE_EPOCH=1700000000 t_run "${src}/scripts/adapters/release-flow.sh" package 0.3.0 "${dist}"

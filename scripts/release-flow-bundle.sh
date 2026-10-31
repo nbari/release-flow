@@ -23,6 +23,7 @@ PAYLOAD=(
   scripts/candidate-targets.sh
   scripts/release-promote.sh
   scripts/release-status.sh
+  scripts/release-candidates.sh
   scripts/release-retry.sh
   scripts/lib/common.sh
   scripts/lib/github.sh
@@ -55,13 +56,13 @@ OPTIONAL=(
   scripts/adapters/cargo.sh
 )
 # Bundle support files: bundle path <- source path.
-SUPPORT_DST=(install.sh docs/GITHUB_STORAGE.md docs/ADOPTION.md docs/release-flow.example.json docs/MARKETPLACE.md docs/callers/candidate.yml docs/callers/release.yml docs/RULESETS.md
-  examples/shell/tools/adapter.sh examples/shell/VERSION examples/shell/app/hello.sh examples/shell/.release-flow.json
+SUPPORT_DST=(install.sh docs/GITHUB_STORAGE.md docs/BRANCHES.md docs/CANDIDATES.md docs/ADOPTION.md docs/release-flow.example.json docs/MARKETPLACE.md docs/callers/candidate.yml docs/callers/release.yml docs/RULESETS.md
+  examples/shell/README.md examples/shell/tools/adapter.sh examples/shell/VERSION examples/shell/app/hello.sh examples/shell/.release-flow.json
   docs/rulesets/candidates.json docs/rulesets/develop-integrity.json docs/rulesets/develop-review.json
   docs/rulesets/main-integrity.json docs/rulesets/main-promotion.json docs/rulesets/release-tags-create.json
   docs/rulesets/release-tags-immutable.json)
-SUPPORT_SRC=(scripts/release-flow-install.sh docs/GITHUB_STORAGE.md docs/ADOPTION.md docs/release-flow.example.json docs/MARKETPLACE.md docs/callers/candidate.yml docs/callers/release.yml docs/RULESETS.md
-  examples/shell/tools/adapter.sh examples/shell/VERSION examples/shell/app/hello.sh examples/shell/.release-flow.json
+SUPPORT_SRC=(scripts/release-flow-install.sh docs/GITHUB_STORAGE.md docs/BRANCHES.md docs/CANDIDATES.md docs/ADOPTION.md docs/release-flow.example.json docs/MARKETPLACE.md docs/callers/candidate.yml docs/callers/release.yml docs/RULESETS.md
+  examples/shell/README.md examples/shell/tools/adapter.sh examples/shell/VERSION examples/shell/app/hello.sh examples/shell/.release-flow.json
   docs/rulesets/candidates.json docs/rulesets/develop-integrity.json docs/rulesets/develop-review.json
   docs/rulesets/main-integrity.json docs/rulesets/main-promotion.json docs/rulesets/release-tags-create.json
   docs/rulesets/release-tags-immutable.json)
@@ -161,7 +162,7 @@ stage_file() {
       .github/workflows/candidate.yml|.github/workflows/release.yml)
         sed "s/__RELEASE_FLOW_SHA__/${source_commit}/g" "${src_root}/docs/callers/${path##*/}" > "${bundle_dir}/${dst}"
         ;;
-      docs/release-flow.example.json)
+      docs/release-flow.example.json|examples/shell/.release-flow.json)
         jq --arg sha "${source_commit}" '.pipeline={repository:"nbari/release-flow",sha:$sha} | .promotion.required_job="candidate / Candidate OK"' \
           "${src_root}/${src}" > "${bundle_dir}/${dst}"
         ;;

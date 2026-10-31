@@ -131,7 +131,7 @@ case "${subcommand}" in
       cargo package --locked --no-verify --quiet >&2
       target_dir="$(cargo metadata --no-deps --format-version 1 | jq -er '.target_directory')"
       cp "${target_dir}/package/${pkg}-${target_version}.crate" "${outdir}/${pkg}-${target_version}.crate"
-      bash "${root}/scripts/release-flow-bundle.sh" --version "${target_version}" --out "${outdir}" >/dev/null
+      bash "${root}/scripts/release-flow-bundle.sh" --version "${target_version}" --out "${outdir}" --workflow-mode reusable >/dev/null
     fi
     ;;
 

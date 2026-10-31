@@ -35,3 +35,13 @@ release-status version *flags:
 [group('release')]
 release-retry version channel *flags:
     @bash {{ quote(release_flow_scripts / 'release-retry.sh') }} --project-dir {{ quote(justfile_directory()) }} {{ quote(version) }} {{ quote(channel) }} {{ flags }}
+
+# List candidate identity, CI, retention, base freshness and cleanup eligibility
+[group('release')]
+release-candidates *flags:
+    @bash {{ quote(release_flow_scripts / 'release-candidates.sh') }} --project-dir {{ quote(justfile_directory()) }} {{ flags }}
+
+# Plan candidate cleanup; --apply explicitly deletes only eligible branches
+[group('release')]
+release-prune *flags:
+    @bash {{ quote(release_flow_scripts / 'release-candidates.sh') }} --project-dir {{ quote(justfile_directory()) }} --prune {{ flags }}

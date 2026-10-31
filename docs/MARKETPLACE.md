@@ -115,8 +115,10 @@ from `pull_request_target` or another privileged workflow.
    Action **and** both reusable workflows. Keep existing tags immutable. Do not
    create or force-update `v1`, `main` or `latest` aliases as an adoption default.
 
-No production release or Marketplace listing was created during implementation.
-Owner agreement, listing validation and publication remain **NOT YET ACTIVATED**.
+Publication state and exact release/Marketplace URLs are recorded in
+[VERIFICATION.md](VERIFICATION.md). A production GitHub Release can exist before
+the owner enables Marketplace publication; never infer listing activation from
+the release alone.
 
 ## Upgrades and troubleshooting
 

@@ -21,12 +21,6 @@
     "github-release": {
       "required": true,
       "assets": ["*"]
-    },
-    "crates-io": {
-      "required": true,
-      "artifact": "{project}-{version}.crate",
-      "package": "release-flow",
-      "index_url": "https://index.crates.io"
     }
   }
 }
