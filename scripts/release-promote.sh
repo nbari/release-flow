@@ -8,7 +8,7 @@
 # the GitHub evidence (workflow run and its pinned pipeline, required job, artifact), the downloaded
 # manifest, the durable storage record and blobs, signing readiness and the
 # server-side protection rules. Act: create (or reuse) the signed tag X.Y.Z,
-# re-check the remote, then ONE `git push --atomic` of main, the production base
+# re-check the remote, then ONE `git push --no-follow-tags --atomic` of main, the production base
 # and the tag (fast-forward and create-only; never forced). Reconcile: observe
 # the remote and classify the outcome, whatever the push reported.
 #
@@ -473,7 +473,7 @@ fi
 if ! rf_gh_protection_ok "${repository}" "${main_branch}" "${prod_base}" "${required_job}" 2>"${WORK}/gh.err"; then
   pf_fail PF20 "$(cat "${WORK}/gh.err")"
 fi
-if ! git push --dry-run --atomic --porcelain "${push_remote}" "${commit}:refs/heads/${main_branch}" \
+if ! git push --no-follow-tags --dry-run --atomic --porcelain "${push_remote}" "${commit}:refs/heads/${main_branch}" \
      "${commit}:refs/heads/${prod_base}" > "${WORK}/dry-push.out" 2>&1; then
   pf_fail PF20 "dry-run push rejected: $(tr '\n' ' ' < "${WORK}/dry-push.out")"
 fi
@@ -547,7 +547,7 @@ echo "[T2] RECHECK remote unchanged since preflight" >&2
 
 # T3 PUSH: exactly one atomic push of three refs
 set +e
-push_out="$(git push --atomic --porcelain "${push_remote}" "${commit}:refs/heads/${main_branch}" \
+push_out="$(git push --no-follow-tags --atomic --porcelain "${push_remote}" "${commit}:refs/heads/${main_branch}" \
   "${commit}:refs/heads/${prod_base}" "refs/tags/${version}:refs/tags/${version}" 2>&1)"
 push_rc=$?
 set -e

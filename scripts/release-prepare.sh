@@ -336,12 +336,12 @@ fi
 pushed=false
 if [[ "${do_push}" == "true" ]]; then
   # --porcelain ref status lines go to stderr: stdout carries only key=value output.
-  if git push --porcelain --force-with-lease="refs/heads/${candidate_branch}:" "${cfg_remote}" "${candidate_sha}:refs/heads/${candidate_branch}" >&2; then
+  if git push --no-follow-tags --porcelain --force-with-lease="refs/heads/${candidate_branch}:" "${cfg_remote}" "${candidate_sha}:refs/heads/${candidate_branch}" >&2; then
     pushed=true
     echo "Candidate branch pushed to ${cfg_remote}/${candidate_branch}" >&2
   else
     echo "Push failed: remote branch '${candidate_branch}' could not be created cleanly." >&2
-    echo "Retry push manually: git push --force-with-lease=\"refs/heads/${candidate_branch}:\" ${cfg_remote} ${candidate_sha}:refs/heads/${candidate_branch}" >&2
+    echo "Retry push manually: git push --no-follow-tags --force-with-lease=\"refs/heads/${candidate_branch}:\" ${cfg_remote} ${candidate_sha}:refs/heads/${candidate_branch}" >&2
     echo "Or delete local branch: git branch -D ${candidate_branch}" >&2
     exit 1
   fi
@@ -362,5 +362,5 @@ EOF
 echo "Candidate prepared successfully: ${candidate_branch} (${candidate_sha:0:12})" >&2
 if [[ "${do_push}" != "true" ]]; then
   echo "Next step (push candidate to trigger CI validation):" >&2
-  echo "  git push --force-with-lease=\"refs/heads/${candidate_branch}:\" ${cfg_remote} ${candidate_sha}:refs/heads/${candidate_branch}" >&2
+  echo "  git push --no-follow-tags --force-with-lease=\"refs/heads/${candidate_branch}:\" ${cfg_remote} ${candidate_sha}:refs/heads/${candidate_branch}" >&2
 fi

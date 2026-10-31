@@ -116,11 +116,14 @@ promote_bg() {
 
 t_case "PR01: Happy path"
 repo="$(tf_release_repo pr01)"
+git -C "${repo}" config push.followTags true
+git -C "${repo}" tag -a unrelated-local-note -m "Keep this tag local"
 tf_candidate "${repo}" patch
 sandbox_before="$(git ls-remote "${TF_TMP}/pr01.git" refs/heads/sandbox)"
 branch_before="$(git ls-remote "${TF_TMP}/pr01.git" "refs/heads/${TF_BRANCH}")"
 promote "${repo}" --candidate "${TF_BRANCH}" --commit "${TF_C}"
 assert_rc 0 "PR01: promote succeeds"
+assert_eq "" "$(git ls-remote "${TF_TMP}/pr01.git" refs/tags/unrelated-local-note)" "PR01: preparation and promotion never auto-follow unrelated tags"
 assert_eq "${EXPECTED_KEYS}" "$(out_keys)" "PR01: stdout keys in contract order"
 assert_eq "PROMOTED" "$(out_kv state)" "PR01: state PROMOTED"
 assert_eq "0.1.1" "$(out_kv version)" "PR01: version"
