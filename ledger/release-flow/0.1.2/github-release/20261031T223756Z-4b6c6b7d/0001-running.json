@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "kind": "publication-event",
+  "project": "release-flow",
+  "version": "0.1.2",
+  "candidate_commit": "8c7d444b9e47ae28d0864e8d9fc3c936530f5b5f",
+  "manifest_sha256": "3a5342a6bfd1b161b8578bb8ca8c9d223311b958c9295d1b68f97af271c2dcc1",
+  "channel": "github-release",
+  "attempt_id": "20261031T223756Z-4b6c6b7d",
+  "seq": 1,
+  "state": "running",
+  "at": "2026-10-31T22:38:31Z",
+  "actor": "gha:41249039797/1",
+  "run_url": "https://github.com/nbari/release-flow/actions/runs/41249039797",
+  "observed": {},
+  "error_class": null,
+  "error": null
+}
