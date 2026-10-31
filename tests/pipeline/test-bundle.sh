@@ -224,13 +224,17 @@ t_run "${ROOT}/scripts/adapters/release-flow.sh" inventory 9.9.9
 assert_rc 0 "B8: inventory succeeds"
 names="$(printf '%s' "${T_OUT}" | jq -r '.artifacts[].name' | tr '\n' ' ')"
 assert_contains "${names}" "release-flow-9.9.9-x86_64-unknown-linux-musl.tar.gz" "B8: lists the Linux Cargo archive"
+assert_contains "${names}" "release-flow-9.9.9-x86_64-unknown-linux-musl.deb" "B8: lists the Linux deb"
+assert_contains "${names}" "release-flow-9.9.9-x86_64-unknown-linux-musl.rpm" "B8: lists the Linux rpm"
+assert_contains "${names}" "release-flow-9.9.9-aarch64-unknown-linux-musl.tar.gz" "B8: lists the arm64 Cargo archive"
 assert_contains "${names}" "release-flow-9.9.9-x86_64-apple-darwin.tar.gz" "B8: lists the macOS Cargo archive"
 assert_contains "${names}" "release-flow-9.9.9-x86_64-pc-windows-msvc.tar.gz" "B8: lists the Windows Cargo archive"
+assert_contains "${names}" "release-flow-9.9.9-x86_64-pc-windows-msvc.zip" "B8: lists the Windows zip"
 assert_contains "${names}" "release-flow-bundle-9.9.9.tar.gz" "B8: lists the bundle archive"
 assert_contains "${names}" "release-flow-9.9.9.crate" "B8: lists the crate package"
 t_run "${ROOT}/scripts/adapters/release-flow.sh" targets
 assert_rc 0 "B8: targets succeeds"
-assert_eq "x86_64-unknown-linux-musl:ubuntu-24.04 x86_64-apple-darwin:macos-latest x86_64-pc-windows-msvc:windows-latest any:ubuntu-24.04" \
+assert_eq "x86_64-unknown-linux-musl:ubuntu-24.04 aarch64-unknown-linux-musl:ubuntu-24.04-arm x86_64-apple-darwin:macos-latest x86_64-pc-windows-msvc:windows-latest any:ubuntu-24.04" \
   "$(printf '%s' "${T_OUT}" | jq -r 'map(.target + ":" + .runner) | join(" ")')" "B8: one matrix leg per platform plus the any leg"
 t_run bash "${ROOT}/scripts/candidate-targets.sh" --adapter scripts/adapters/release-flow.sh
 assert_rc 0 "B8: candidate-targets accepts the release-flow targets"

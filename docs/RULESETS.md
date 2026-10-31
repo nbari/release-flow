@@ -33,8 +33,8 @@ existing ruleset with `gh api -X PUT repos/<owner>/<name>/rulesets/<id> --input 
 
 Required status checks also apply to the promotion push: the candidate commit
 already carries `Candidate OK` from `candidate.yml`, so the server enforces the
-exact-SHA validation as well. `CI OK` is `ci.yml`'s aggregate job; `build.yml`
-reports `Build OK`, so the two required contexts are unambiguous.
+exact-SHA validation as well. `CI OK` is `ci.yml`'s aggregate job. `candidate.yml`
+reports `Candidate OK`. `release.yml` publishes on the signed tag; it is not a required status check.
 
 ## Who can do what
 
@@ -55,12 +55,18 @@ Versioning on, Object Lock in governance mode with a retention of at least
 the supported recovery period, and no lifecycle expiry on `blobs/`. Test-only
 candidates are never retained.
 
-## crates.io token
+## crates.io
 
-Store `CARGO_REGISTRY_TOKEN` only in the `publish-crates-io` environment,
-scoped to `publish-update` and to the crate named by
-`publishers.crates-io.package` (default: `project`). In a workspace with
-several crates, the publisher passes `--package <package>` to both
+Preferred: crates.io Trusted Publishing for workflow `release.yml` in the
+`publish-crates-io` environment. The tag-push job requests `id-token: write`
+and does not set `CARGO_REGISTRY_TOKEN` when that secret is absent, so cargo
+exchanges a short-lived token itself.
+
+A long-lived token is the fallback for `--local` retries and for a publisher
+that is not a trusted workflow. Store `CARGO_REGISTRY_TOKEN` only in the
+`publish-crates-io` environment, scoped to `publish-update` and to the crate
+named by `publishers.crates-io.package` (default: `project`). In a workspace
+with several crates, the publisher passes `--package <package>` to both
 `cargo package` and `cargo publish`, so the token never needs rights on the
 other crates; publish each further crate from its own release-flow project.
 

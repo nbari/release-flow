@@ -117,6 +117,17 @@ jobs:
         if: contains(matrix.target, 'musl')
         run: sudo apt-get update -y && sudo apt-get install -y musl-tools
 
+      # Linux legs that declare packager metadata also emit .deb and .rpm.
+      # Pinned so a later candidate packages the same way.
+      - name: Install DEB and RPM packagers
+        if: contains(matrix.target, 'linux')
+        run: |
+          if grep -Rqs '^\[package\.metadata\.deb\]' --include='Cargo.toml' . \
+            || grep -Rqs '^\[package\.metadata\.generate-rpm\]' --include='Cargo.toml' .; then
+            cargo install cargo-deb --version 3.8.0 --locked
+            cargo install cargo-generate-rpm --version 0.21.0 --locked
+          fi
+
       - name: Package this target
         env:
           ADAPTER: ${{ needs.guard.outputs.adapter }}

@@ -80,8 +80,31 @@ cd "${crate_dir}"
   assert_rc 0 "C2: candidate-targets accepts the cargo targets"
   t_run bash "${adapter}" inventory "0.2.0"
   assert_rc 0 "C2: inventory succeeds"
-  assert_eq "demo-app-0.2.0-x86_64-unknown-linux-musl.tar.gz:x86_64-unknown-linux-musl demo-app-0.2.0-x86_64-pc-windows-msvc.tar.gz:x86_64-pc-windows-msvc demo-app-0.2.0-aarch64-apple-darwin.tar.gz:aarch64-apple-darwin" \
-    "$(printf '%s' "${T_OUT}" | jq -r '[.artifacts[] | .name + ":" + .target] | join(" ")')" "C2: one artifact per configured target"
+  assert_eq "demo-app-0.2.0-x86_64-unknown-linux-musl.tar.gz:x86_64-unknown-linux-musl demo-app-0.2.0-x86_64-pc-windows-msvc.tar.gz:x86_64-pc-windows-msvc demo-app-0.2.0-x86_64-pc-windows-msvc.zip:x86_64-pc-windows-msvc demo-app-0.2.0-aarch64-apple-darwin.tar.gz:aarch64-apple-darwin" \
+    "$(printf '%s' "${T_OUT}" | jq -r '[.artifacts[] | .name + ":" + .target] | join(" ")')" "C2: archive per target, plus a Windows zip"
+  unset RELEASE_FLOW_CARGO_TARGETS
+cd "${orig_pwd}"
+
+t_case "C3: Linux deb and rpm join the inventory when metadata is present"
+cd "${crate_dir}"
+  cat >> Cargo.toml <<'EOF'
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/demo-app", dest = "/usr/bin/demo-app", mode = "0755" },
+]
+
+[package.metadata.deb]
+assets = [
+  ["target/release/demo-app", "/usr/bin/demo-app", "755"],
+]
+depends = ""
+EOF
+  export RELEASE_FLOW_CARGO_TARGETS="x86_64-unknown-linux-musl:ubuntu-24.04 aarch64-apple-darwin:macos-latest"
+  t_run bash "${adapter}" inventory "0.2.0"
+  assert_rc 0 "C3: inventory succeeds"
+  assert_eq "demo-app-0.2.0-x86_64-unknown-linux-musl.tar.gz:x86_64-unknown-linux-musl demo-app-0.2.0-x86_64-unknown-linux-musl.deb:x86_64-unknown-linux-musl demo-app-0.2.0-x86_64-unknown-linux-musl.rpm:x86_64-unknown-linux-musl demo-app-0.2.0-aarch64-apple-darwin.tar.gz:aarch64-apple-darwin" \
+    "$(printf '%s' "${T_OUT}" | jq -r '[.artifacts[] | .name + ":" + .target] | join(" ")')" "C3: deb and rpm only on the Linux target"
   unset RELEASE_FLOW_CARGO_TARGETS
 cd "${orig_pwd}"
 

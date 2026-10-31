@@ -72,6 +72,112 @@ build_targets() {
   fi
 }
 
+# manifest_has_table <table>: the selected package manifest contains [table].
+manifest_has_table() {
+  local table="$1" pkg manifest
+  pkg="$(resolve_package)"
+  manifest="$(cargo metadata --no-deps --format-version 1 | jq -er --arg p "${pkg}" '.packages[] | select(.name == $p) | .manifest_path')"
+  awk -v table="${table}" 'index($0, "[" table "]") == 1 { found = 1 } END { exit found ? 0 : 1 }' "${manifest}"
+}
+
+# inventory_rows <pkg> <version>: "name<TAB>target" for every file package writes.
+# Linux deb/rpm are included only when the manifest declares that packager.
+# Windows also gets a zip, matching the usual GitHub release asset set.
+inventory_rows() {
+  local pkg="$1" ver="$2" target deb=0 rpm=0
+  if manifest_has_table 'package.metadata.deb'; then
+    deb=1
+  fi
+  if manifest_has_table 'package.metadata.generate-rpm'; then
+    rpm=1
+  fi
+  while IFS= read -r target; do
+    [[ -n "${target}" ]] || continue
+    printf '%s\t%s\n' "${pkg}-${ver}-${target}.tar.gz" "${target}"
+    if [[ "${target}" == *windows* ]]; then
+      printf '%s\t%s\n' "${pkg}-${ver}-${target}.zip" "${target}"
+    fi
+    if [[ "${target}" == *linux* ]]; then
+      if [[ "${deb}" == 1 ]]; then
+        printf '%s\t%s\n' "${pkg}-${ver}-${target}.deb" "${target}"
+      fi
+      if [[ "${rpm}" == 1 ]]; then
+        printf '%s\t%s\n' "${pkg}-${ver}-${target}.rpm" "${target}"
+      fi
+    fi
+  done <<< "$(build_targets)"
+}
+
+# write_zip <stage> <dest>: deterministic zip (SOURCE_DATE_EPOCH, sorted names).
+write_zip() {
+  local stage="$1" dest="$2" py="python3"
+  if ! command -v python3 >/dev/null 2>&1; then
+    py="python"
+  fi
+  command -v "${py}" >/dev/null 2>&1 || { echo "python3 is required to write ${dest}" >&2; return 1; }
+  "${py}" - "${stage}" "${dest}" <<'PY'
+import os
+import sys
+import time
+import zipfile
+
+stage, dest = sys.argv[1], sys.argv[2]
+stamp = time.gmtime(int(os.environ["SOURCE_DATE_EPOCH"]))[:6]
+with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    for name in sorted(os.listdir(stage)):
+        path = os.path.join(stage, name)
+        if not os.path.isfile(path):
+            continue
+        info = zipfile.ZipInfo(filename=name, date_time=stamp)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.external_attr = 0o644 << 16
+        with open(path, "rb") as handle:
+            archive.writestr(info, handle.read())
+PY
+}
+
+# write_linux_packages <target> <pkg> <ver> <bin-name> <bin-path> <outdir>
+# Copies the built binary to target/release (the path package metadata names)
+# and writes the deb/rpm the inventory promised. Missing tools are a hard failure.
+write_linux_packages() {
+  local target="$1" pkg="$2" ver="$3" bin_name="$4" bin_path="$5" outdir="$6"
+  local want_deb=0 want_rpm=0 dest found
+  [[ "${target}" == *linux* ]] || return 0
+  if manifest_has_table 'package.metadata.deb'; then
+    want_deb=1
+  fi
+  if manifest_has_table 'package.metadata.generate-rpm'; then
+    want_rpm=1
+  fi
+  [[ "${want_deb}" == 1 || "${want_rpm}" == 1 ]] || return 0
+  if [[ "${want_deb}" == 1 ]] && ! command -v cargo-deb >/dev/null 2>&1; then
+    echo "cargo-deb is required (cargo install cargo-deb --version 3.8.0 --locked)" >&2
+    return 1
+  fi
+  if [[ "${want_rpm}" == 1 ]] && ! command -v cargo-generate-rpm >/dev/null 2>&1; then
+    echo "cargo-generate-rpm is required (cargo install cargo-generate-rpm --version 0.21.0 --locked)" >&2
+    return 1
+  fi
+  dest="${target_dir_rel}/release/${bin_name}"
+  mkdir -p "${target_dir_rel}/release"
+  if [[ "${bin_path}" != "${dest}" ]]; then
+    cp "${bin_path}" "${dest}"
+  fi
+  rm -rf "${target_dir_rel}/debian" "${target_dir_rel}/generate-rpm"
+  if [[ "${want_rpm}" == 1 ]]; then
+    cargo generate-rpm >&2
+    found="$(find "${target_dir_rel}/generate-rpm" -maxdepth 1 -type f -name '*.rpm' -print -quit)"
+    [[ -n "${found}" ]] || { echo "cargo generate-rpm produced no .rpm" >&2; return 1; }
+    cp "${found}" "${outdir}/${pkg}-${ver}-${target}.rpm"
+  fi
+  if [[ "${want_deb}" == 1 ]]; then
+    cargo deb --no-build >&2
+    found="$(find "${target_dir_rel}/debian" -maxdepth 1 -type f -name '*.deb' -print -quit)"
+    [[ -n "${found}" ]] || { echo "cargo deb produced no .deb" >&2; return 1; }
+    cp "${found}" "${outdir}/${pkg}-${ver}-${target}.deb"
+  fi
+}
+
 case "${subcommand}" in
   targets)
     if [[ -z "${RELEASE_FLOW_CARGO_TARGETS:-}" ]]; then
@@ -176,9 +282,8 @@ case "${subcommand}" in
       lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
     fi
 
-    build_targets | jq -R -s --arg pkg "${pkg}" --arg v "${target_version}" \
-      --arg rustc "${rustc_ver}" --arg cargo "${cargo_ver}" --arg lock "${lock_hash}" '
-      {artifacts: (split("\n") | map(select(length > 0) | {name: ($pkg + "-" + $v + "-" + . + ".tar.gz"), target: .})),
+    inventory_rows "${pkg}" "${target_version}" | jq -R -s --arg rustc "${rustc_ver}" --arg cargo "${cargo_ver}" --arg lock "${lock_hash}" '
+      {artifacts: (split("\n") | map(select(length > 0) | split("\t") | {name: .[0], target: .[1]})),
        build_info: {tools: {rustc: $rustc, cargo: $cargo, cargo_lock_sha256: $lock}}}'
     ;;
 
@@ -263,6 +368,10 @@ case "${subcommand}" in
       archive_name="${pkg}-${target_version}-${target}.tar.gz"
       "${gnu_tar}" --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
         --mode='u+rwX,go+rX,go-w' -C "${stage_dir}" -cf - . | gzip -n > "${outdir}/${archive_name}"
+      if [[ "${target}" == *windows* ]]; then
+        write_zip "${stage_dir}" "${outdir}/${pkg}-${target_version}-${target}.zip"
+      fi
+      write_linux_packages "${target}" "${pkg}" "${target_version}" "${bin_name}" "${bin_path}" "${outdir}"
       rm -rf "${stage_dir}"
       stage_dir=""
     done <<< "$(build_targets)"

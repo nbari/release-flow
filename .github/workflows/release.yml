@@ -1,9 +1,9 @@
 name: Release
 
-# One job per channel and no `needs:` anywhere: every publisher resolves and
-# verifies the signed tag and the stored bytes on its own, so a failing channel
-# never blocks another. Recovery re-dispatches a single channel with current
-# publisher code against the same tag and bytes (`just release-retry`).
+# A pushed X.Y.Z tag is the publish trigger. This workflow does not rebuild:
+# it publishes the candidate inventory (archives, Windows zip, Linux deb/rpm,
+# crate) retained for that exact commit. Recovery re-dispatches one channel
+# with current publisher code against the same tag and bytes (`just release-retry`).
 
 on:
   push:
@@ -184,8 +184,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
+          # Empty when the secret is absent. Unset below so cargo uses crates.io
+          # Trusted Publishing (workflow release.yml, environment publish-crates-io).
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
+          if [[ -z "${CARGO_REGISTRY_TOKEN}" ]]; then
+            unset CARGO_REGISTRY_TOKEN
+          fi
           rc=0
           bash scripts/publication/publish.sh --version "${VERSION}" --channel crates-io || rc=$?
           if (( rc == 7 )); then echo "::notice::crates-io is not configured; skipped"; exit 0; fi

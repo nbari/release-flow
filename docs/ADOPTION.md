@@ -137,7 +137,7 @@ Release automation communicates with your project through a single executable ad
 | `inventory <X.Y.Z>` | Release version | JSON inventory string | None (read-only) |
 | `package <X.Y.Z> <outdir>` | Release version, output directory (`SOURCE_DATE_EPOCH` in env; `RELEASE_FLOW_TARGET` selects one target) | Free-form build logs | Builds and writes the artifacts of the selected target (all when unset) into `<outdir>` |
 
-`candidate.yml` packages each target on its runner (`RELEASE_FLOW_TARGET=<target>`), then one `assemble` job requires the union of all legs to equal the full inventory. The Cargo adapter lists targets from `RELEASE_FLOW_CARGO_TARGETS` (`"<rust-target>[:<runner>] ..."`); Windows binaries get `.exe`, archives are always `.tar.gz` (GNU tar or `gtar` required).
+`candidate.yml` packages each target on its runner (`RELEASE_FLOW_TARGET=<target>`), then one `assemble` job requires the union of all legs to equal the full inventory. The Cargo adapter lists targets from `RELEASE_FLOW_CARGO_TARGETS` (`"<rust-target>[:<runner>] ..."`); Windows binaries get `.exe`. Every target gets a `.tar.gz` (GNU tar or `gtar` required). Windows targets also get a `.zip`. Linux targets get a `.deb` and a `.rpm` when the package manifest contains `[package.metadata.deb]` and `[package.metadata.generate-rpm]` (`target/release/<bin>` is the asset path those tools read). A pushed `X.Y.Z` tag starts `release.yml`, which publishes that inventory and does not rebuild it.
 
 ### Inventory JSON Schema
 

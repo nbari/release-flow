@@ -10,6 +10,17 @@ readme = "README.md"
 keywords = ["release", "ci", "git", "cli", "semver"]
 categories = ["command-line-utilities", "development-tools"]
 
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/release-flow", dest = "/usr/bin/release-flow", mode = "0755" },
+]
+
+[package.metadata.deb]
+assets = [
+  ["target/release/release-flow", "/usr/bin/release-flow", "755"],
+]
+depends = ""
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["std", "color"] }
