@@ -15,8 +15,7 @@
     "publisher_ref": "main"
   },
   "storage": {
-    "uri": "s3://my-release-bucket/my-service",
-    "region": "us-east-1"
+    "uri": "github://my-org/my-service"
   },
   "publishers": {
     "github-release": {

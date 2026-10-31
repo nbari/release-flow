@@ -29,7 +29,7 @@ def nonempty: str and length > 0;
 def remotename: str and test("^[A-Za-z0-9][A-Za-z0-9._-]*$");
 def branchname: str and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (test("\\.\\.|//|/$|\\.lock$") | not);
 def tpl: str and length > 0 and (gsub("\\{(project|version)\\}"; "") | test("[{}]") | not);
-def uri: str and test("^(file:///|s3://[a-z0-9][a-z0-9.-]*[a-z0-9](/|$))");
+def uri: str and (test("^(file:///|s3://[a-z0-9][a-z0-9.-]*[a-z0-9](/|$))") or test("^github://[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$"));
 def exact($ks): if type != "object" then err("must be an object")
   elif (keys | sort) != ($ks | sort) then err("keys must be exactly " + ($ks | sort | join(",")) + " (got " + (keys | sort | join(",")) + ")")
   else empty end;
@@ -100,7 +100,7 @@ opt("repository"; repo; "invalid repository"),
 (if has("storage") then .storage |
   allowed(["uri","region","endpoint"]),
   (if type == "object" then
-    opt("uri"; uri; "storage.uri must be file:///abs or s3://bucket[/prefix]"),
+    opt("uri"; uri; "storage.uri must be github://owner/repo, file:///abs or s3://bucket[/prefix]"),
     opt("region"; str; "storage.region must be a string"),
     opt("endpoint"; str and (. == "" or test("^https?://")); "storage.endpoint must be an http(s) URL")
   else empty end)

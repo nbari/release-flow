@@ -256,3 +256,20 @@ macOS packaging did run successfully. Centralized workflows require github.com.
 | Just deploy, shell adapter, bundle install and managed upgrade | **IMPLEMENTED**, **TESTED LOCALLY**, **VERIFIED ON GITHUB** |
 | Native multi-platform candidate and artifact verification | **IMPLEMENTED**, **TESTED LOCALLY**, **VERIFIED ON GITHUB** |
 | Marketplace agreement, name acceptance, categories and listing | **NOT YET ACTIVATED**; owner UI authorization required |
+# GitHub-only storage follow-up
+
+The `github://owner/repo` backend passed `just check`, `just pipeline-test`,
+actionlint (with the existing narrow context-schema exception), ShellCheck,
+yamllint and `git diff --check`. The pipeline now has 14 suites, including 51
+GitHub-backend assertions. Tests cover batch sealing, original-byte recovery,
+upload interruption, draft starter repair, lost publish/CAS responses, stale
+tokens, concurrent creates, lock ownership, mutable-release rejection, incorrect
+storage tag targets, truncated listings and read-only owner setup defaults.
+
+A real API smoke test in the isolated public repository
+[`nbari/release-flow-storage-test-20261031`](https://github.com/nbari/release-flow-storage-test-20261031)
+sealed and downloaded byte-identical fixture data. GitHub reports the internal
+storage release `immutable: true`. Real concurrent creates returned `5` and `0`;
+the wrong lock owner was refused and the correct owner released its lock.
+These API checks alone do not establish reusable-workflow retention: the
+cross-repository job-token test is recorded separately after actual execution.

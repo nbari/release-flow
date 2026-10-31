@@ -159,7 +159,7 @@ t_run bash "${repo}/scripts/release-retry.sh" --project-dir "${repo}" 0.1.1 bogu
 assert_rc 2 "IN03: unknown channel exits 2"
 
 t_case "IN04: Bundle and workflow contract"
-assert_eq "33" "$(jq '.payload | length' "${TF_BUNDLE_ROOT}/BUNDLE.json")" "IN04: the bundle carries all 33 payload files"
+assert_eq "35" "$(jq '.payload | length' "${TF_BUNDLE_ROOT}/BUNDLE.json")" "IN04: the bundle carries all 35 payload files"
 missing=0
 while IFS= read -r p; do
   [[ -f "${TF_BUNDLE_ROOT}/payload/${p}" ]] || missing=$(( missing + 1 ))

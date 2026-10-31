@@ -65,6 +65,9 @@ permissions:
   id-token: write
 jobs:
   candidate:
+    permissions:
+      contents: write
+      id-token: write
     uses: nbari/release-flow/.github/workflows/candidate.yml@FULL_SHA
     with:
       adapter: tools/adapter.sh
@@ -74,6 +77,8 @@ The consumer owns its source, adapter, configuration, release branches and
 credentials. Release Flow checks candidate identity, runs the adapter, packages
 its targets, generates a manifest, verifies every artifact and coordinates
 retention. The Marketplace Action does not launch this multi-job workflow.
+
+Production can stay entirely on GitHub: [GitHub-only retention](docs/GITHUB_STORAGE.md) uses immutable Release assets, a protected metadata branch and the job token. AWS is optional.
 
 For publishing, commit the complete [release caller](docs/callers/release.yml)
 as `.github/workflows/release.yml`, replacing `__RELEASE_FLOW_SHA__` with the
