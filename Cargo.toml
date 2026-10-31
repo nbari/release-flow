@@ -1,6 +1,6 @@
 [package]
 name = "release-flow"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Nicolas Embriz <nbari@tequila.io>"]
 description = "Read-only release inspection and a reference for independently recoverable release pipelines"
