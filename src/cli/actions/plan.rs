@@ -1,54 +1,58 @@
 use crate::{
-    release::version::{self, Bump},
+    release::{plan::PlanReport, version::Bump},
     repository::Snapshot,
 };
 use anyhow::Result;
-use serde_json::json;
+use std::process::ExitCode;
 
-pub fn run(bump: Bump, as_json: bool) -> Result<()> {
+/// Run the release planning preview action.
+///
+/// # Errors
+/// Returns an error if repository inspection fails or planning calculation fails.
+pub fn run(bump: Bump, as_json: bool) -> Result<ExitCode> {
     let snapshot = Snapshot::inspect()?;
-    let proposed = version::next(&snapshot.version, bump)?;
-    let mut blockers = Vec::new();
-    if snapshot.branch != "develop" {
-        blockers.push(format!(
-            "expected develop, currently on {}",
-            snapshot.branch
-        ));
-    }
-    if !snapshot.clean {
-        blockers.push("working tree is dirty".to_owned());
-    }
-    if snapshot
-        .latest_tag
-        .as_ref()
-        .is_some_and(|tag| proposed <= *tag)
-    {
-        blockers.push("proposed version is not newer than the latest local tag".to_owned());
-    }
+    let report = PlanReport::create(&snapshot, bump)?;
+
     if as_json {
-        let value = json!({
-            "base_version": snapshot.version.to_string(),
-            "bump": bump.as_str(),
-            "proposed_version": proposed.to_string(),
-            "branch": snapshot.branch,
-            "commit": snapshot.commit,
-            "eligible_locally": blockers.is_empty(),
-            "blockers": blockers,
-            "note": "Read-only local preview; remote CI and promotion guards are not implemented yet",
-        });
-        println!("{}", serde_json::to_string_pretty(&value)?);
-        return Ok(());
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(ExitCode::SUCCESS);
     }
-    println!("Current version  {}", snapshot.version);
-    println!("Proposed {}   {}", bump.as_str(), proposed);
-    if blockers.is_empty() {
-        println!("Local preflight  ready (remote CI not evaluated)");
+
+    println!("Current version  {}", report.base_version);
+    println!("Proposed {}   {}", bump.as_str(), report.proposed_version);
+    println!("Proposed tag     {}", report.proposed_tag);
+    println!(
+        "Branch           {}",
+        report.branch.as_deref().unwrap_or("HEAD (detached)")
+    );
+    println!("Commit           {}", report.commit);
+
+    if !report.tag_conflicts.is_empty() {
+        println!("Tag conflicts    {}", report.tag_conflicts.join(", "));
+    }
+
+    if report.eligible_locally {
+        println!("Local preflight  ready (remote CI evaluated separately by `check`)");
     } else {
         println!("Local preflight  blocked:");
-        for blocker in blockers {
+        for blocker in &report.blockers {
             println!("  - {blocker}");
         }
     }
+
+    if !report.observations.is_empty() {
+        println!("Observations:");
+        for obs in &report.observations {
+            println!("  - {obs}");
+        }
+    }
+    if !report.warnings.is_empty() {
+        println!("Warnings:");
+        for warning in &report.warnings {
+            println!("  - {warning}");
+        }
+    }
+
     println!("This command does not change files, branches, or tags.");
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }

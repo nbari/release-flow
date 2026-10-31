@@ -1,10 +1,30 @@
-use clap::{Arg, ArgAction, Command};
+use clap::{
+    Arg, ArgAction, ColorChoice, Command,
+    builder::styling::{AnsiColor, Effects, Styles},
+};
+
+#[allow(clippy::doc_markdown)]
+pub mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+static LONG_VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let git_hash = built_info::GIT_COMMIT_HASH.unwrap_or("unknown");
+    format!("{} - {git_hash}", env!("CARGO_PKG_VERSION"))
+});
 
 /// Define the CLI interface; business logic belongs to the action handlers.
 #[must_use]
 pub fn new() -> Command {
+    let styles = Styles::styled()
+        .header(AnsiColor::Yellow.on_default() | Effects::BOLD)
+        .usage(AnsiColor::Green.on_default() | Effects::BOLD)
+        .literal(AnsiColor::Blue.on_default() | Effects::BOLD)
+        .placeholder(AnsiColor::Green.on_default());
     Command::new("release-flow")
         .version(env!("CARGO_PKG_VERSION"))
+        .long_version(LONG_VERSION.as_str())
+        .color(ColorChoice::Auto)
+        .styles(styles)
         .about("Inspect release readiness and CI pipeline state")
         .arg(
             Arg::new("verbose")
@@ -29,6 +49,17 @@ pub fn new() -> Command {
                         .value_parser(["patch", "minor", "major"]),
                 )
                 .arg(json_arg()),
+        )
+        .subcommand(
+            Command::new("check")
+                .about("Evaluate release readiness and release gates")
+                .arg(json_arg())
+                .arg(
+                    Arg::new("local-only")
+                        .long("local-only")
+                        .help("Evaluate only local repository invariants, skipping remote CI verification")
+                        .action(ArgAction::SetTrue),
+                ),
         )
 }
 
@@ -58,6 +89,15 @@ mod tests {
             new()
                 .try_get_matches_from(["release-flow", "plan", "experimental"])
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn accepts_check() {
+        assert!(
+            new()
+                .try_get_matches_from(["release-flow", "check", "--json", "--local-only"])
+                .is_ok()
         );
     }
 }

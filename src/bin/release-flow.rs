@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     match run() {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(error) => {
             eprintln!("error: {error:#}");
             ExitCode::FAILURE
@@ -12,9 +12,10 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<()> {
+fn run() -> Result<ExitCode> {
     match cli::start()? {
         Action::Status { json } => cli::actions::status::run(json),
         Action::Plan { bump, json } => cli::actions::plan::run(bump, json),
+        Action::Check { json, local_only } => cli::actions::check::run(json, local_only),
     }
 }

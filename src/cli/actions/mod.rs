@@ -1,3 +1,4 @@
+pub mod check;
 pub mod plan;
 pub mod status;
 
@@ -7,4 +8,5 @@ use crate::release::version::Bump;
 pub enum Action {
     Status { json: bool },
     Plan { bump: Bump, json: bool },
+    Check { json: bool, local_only: bool },
 }
