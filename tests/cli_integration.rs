@@ -41,7 +41,8 @@ version = "0.1.0"
 edition = "2024"
 "#;
         fs::write(repo.path.join("Cargo.toml"), manifest).expect("write Cargo.toml");
-        repo.git(&["add", "Cargo.toml"]);
+        fs::write(repo.path.join(".gitignore"), "*.profraw\n").expect("write .gitignore");
+        repo.git(&["add", "Cargo.toml", ".gitignore"]);
         repo.git(&["commit", "-m", "Initial commit"]);
 
         repo
@@ -74,10 +75,11 @@ edition = "2024"
 
         if let Some(extra) = extra_path {
             let current_path = std::env::var_os("PATH").unwrap_or_default();
-            let mut new_path = extra.as_os_str().to_os_string();
-            new_path.push(":");
-            new_path.push(current_path);
-            cmd.env("PATH", new_path);
+            let mut paths = vec![extra.to_path_buf()];
+            paths.extend(std::env::split_paths(&current_path));
+            if let Ok(new_path) = std::env::join_paths(paths) {
+                cmd.env("PATH", new_path);
+            }
         }
 
         let output = cmd.output().expect("execute release-flow binary");
@@ -250,6 +252,7 @@ fn test_tag_conflicts_detection() {
 }
 
 #[test]
+#[cfg(unix)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 fn test_remote_ci_exact_sha_with_mock_gh() {
     let repo = TempRepo::new("mock-gh");
