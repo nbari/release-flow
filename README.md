@@ -25,52 +25,51 @@ The target is a *recoverable release*, not an impossible all-or-nothing transact
 
 ## Release flow
 
-```text
-                          contributor PRs
-                               │
-sandbox ───── optional squash ─┴────────────► develop @ D
-     (never auto-rewritten)                     │
-                                                ▼
-                                  preflight + version selection
-                                                │
-                              isolated temporary worktree / branch
-                                  release/<version>-<base-sha>
-                                                │
-                                    versioned commit @ C
-                                                │
-                                                ▼
-                               candidate pipeline for exact C
-                           ┌────────────────────────────────┐
-                           │ CI / tests / lint / security   │
-                           │ build / package / sign         │
-                           │ upload / download / verify     │
-                           │ durable artifact manifest     │
-                           └────────────────────────────────┘
-                                                │
-                                     C is VALIDATED
-                                                │
-                               recheck remote refs and rules
-                                                │
-                          ┌─────────────────────▼──────────────────────┐
-                          │ SINGLE ATOMIC GIT PUSH                     │
-                          │ main    ─► C  (fast-forward)               │
-                          │ develop ─► C  (fast-forward)               │
-                          │ tag X.Y.Z ─► C  (signed, immutable)        │
-                          └─────────────────────┬──────────────────────┘
-                                                │
-                                        C is PROMOTED
-                                                │
-             ┌──────────────────┬───────────────┼────────────────┐
-             ▼                  ▼               ▼                ▼
-         GitHub Release       OCI images     Documentation     Helm/package
-         draft → verify       by digest      versioned docs   indexes
-         → publish            → tags         → latest guard   → latest guard
-             │                  │               │                │
-             └────── independent retries, same C and manifest ────┘
-                                                │
-                              all required publishers succeeded
-                                                ▼
-                                            PUBLISHED
+```mermaid
+flowchart TD
+    subgraph Dev["1. Development & Preflight"]
+        direction TB
+        Sandbox["sandbox<br/><i>(disposable / experiments)</i>"] -. "optional squash" .-> Develop["develop @ base commit D<br/><i>(integration branch)</i>"]
+        PRs["Contributor PRs"] --> Develop
+        Develop --> Deploy["just deploy / deploy-minor / deploy-major"]
+    end
+
+    subgraph Prep["2. Isolated Candidate Preparation"]
+        direction TB
+        Deploy --> Worktree["Detached Git Worktree<br/><code>.git/release-flow/worktrees/</code>"]
+        Worktree --> Bump["Adapter: set-version X.Y.Z<br/><i>(Cargo, Go, Python, etc.)</i>"]
+        Bump --> CommitC["Candidate Commit C<br/><i>Release-* metadata trailers</i>"]
+        CommitC --> CandBranch["Branch: <code>release/X.Y.Z-base12</code><br/><i>(create-only lease push)</i>"]
+    end
+
+    subgraph CI["3. Candidate Validation Pipeline (candidate.yml)"]
+        direction TB
+        CandBranch --> Guard["Guard: check ref pattern, trailers & ancestry"]
+        Guard --> Tests["Test: adapter verify & pipeline self-tests"]
+        Guard --> Pkg["Package: multi-platform build matrix"]
+        Tests & Pkg --> Assemble["Assemble: manifest.json v1 & SHA256SUMS"]
+        Assemble --> Verify["Verify: download bundle & verify all digests"]
+        Verify --> Retain["Retain: store blobs to durable storage<br/><i>(content-addressed store)</i>"]
+        Retain --> CandOK["Candidate OK: exact SHA C is VALIDATED"]
+    end
+
+    subgraph Promote["4. Guarded Atomic Git Promotion (release-promote.sh)"]
+        direction TB
+        CandOK --> Preflight["20 Preflight Checks:<br/>• exact SHA & CI evidence<br/>• manifest & storage verified<br/>• develop & main fast-forward safe"]
+        Preflight --> SignTag["Create Signed Annotated Tag X.Y.Z<br/><i>(binds SHA, run ID, manifest digest)</i>"]
+        SignTag --> AtomicPush["Single Atomic Git Push:<br/><code>main ──► C</code><br/><code>develop ──► C</code><br/><code>tag X.Y.Z ──► C</code>"]
+        AtomicPush --> Promoted["C is PROMOTED"]
+    end
+
+    subgraph Pub["5. Independent, Idempotent Publishers (publish.yml)"]
+        direction TB
+        Promoted --> P_GH["GitHub Release<br/><i>draft ──► verify ──► publish</i>"]
+        Promoted --> P_OCI["OCI Registry<br/><i>tag verified digest</i>"]
+        Promoted --> P_Crates["crates.io<br/><i>consume validated .crate</i>"]
+        Promoted --> P_Docs["Documentation<br/><i>versioned docs + latest guard</i>"]
+        Promoted --> P_Helm["Helm / Package Indexes<br/><i>CAS index update</i>"]
+        P_GH & P_OCI & P_Crates & P_Docs & P_Helm --> Published["Release State: PUBLISHED<br/><i>(recorded in publication ledger)</i>"]
+    end
 ```
 
 **Key distinction:** `git push --atomic` gives an atomic boundary **only for Git refs at the same remote**. Artifact stores and deployment targets are reconciled independently afterward. A failed publisher does not roll back a successful promotion.
@@ -150,15 +149,27 @@ For an immutable GitHub Release, upload to a draft, verify all assets, then publ
 
 Release states are explicit:
 
-```text
-PREPARED → VALIDATING → VALIDATED → PROMOTED
-                                       │
-                                       ├── github-release: pending | running | succeeded | failed
-                                       ├── oci:            pending | running | succeeded | failed
-                                       ├── docs:           pending | running | succeeded | failed
-                                       └── helm:           pending | running | succeeded | failed
+```mermaid
+stateDiagram-v2
+    [*] --> PREPARED: just deploy
+    PREPARED --> VALIDATING: push release/** branch
+    VALIDATING --> VALIDATED: candidate.yml passes
+    VALIDATING --> VALIDATION_FAILED: candidate CI failure
+    VALIDATED --> PROMOTED: release-promote (single atomic push)
 
-PUBLISHED = PROMOTED + all required publishers succeeded
+    state PROMOTED {
+        [*] --> IndependentPublishing
+        state IndependentPublishing {
+            direction LR
+            GitHubRelease: GitHub Release
+            OCI: OCI Registry
+            CratesIO: crates.io
+            Docs: Documentation
+            Helm: Helm Indexes
+        }
+    }
+
+    PROMOTED --> PUBLISHED: all required channels succeeded
 ```
 
 The **artifact manifest is immutable**; the publisher status/attempt ledger is separately updateable. Each attempt records version, `C`, channel, workflow run, timestamps, observed digest/state, and an actionable error. Recovery reads actual remote state first; it must not assume that an interrupted job did nothing.
