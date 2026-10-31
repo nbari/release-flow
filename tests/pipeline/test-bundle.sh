@@ -52,6 +52,7 @@ scripts/lib/common.sh
 scripts/lib/github.sh
 scripts/lib/schema.sh
 scripts/lib/tag.sh
+scripts/pipeline-pin.sh
 scripts/publication/ci-install-oras.sh
 scripts/publication/latest.sh
 scripts/publication/ledger.sh
@@ -72,7 +73,7 @@ scripts/storage/backends/s3.sh
 scripts/storage/ci-credentials.sh
 scripts/storage/storage.sh
 scripts/verify-candidate.sh"
-PAYLOAD_COUNT=30
+PAYLOAD_COUNT=31
 SUPPORT_DOCS="docs/ADOPTION.md
 docs/RULESETS.md
 docs/release-flow.example.json

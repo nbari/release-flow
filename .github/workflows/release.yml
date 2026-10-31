@@ -4,6 +4,8 @@ name: Release
 # it publishes the candidate inventory (archives, Windows zip, Linux deb/rpm,
 # crate) retained for that exact commit. Recovery re-dispatches one channel
 # with current publisher code against the same tag and bytes (`just release-retry`).
+# Callable via workflow_call; identity from the signed tag, bytes from storage,
+# publisher code from job.workflow_sha.
 
 on:
   push:
@@ -19,6 +21,29 @@ on:
         required: true
         type: choice
         options: [github-release, oci, crates-io, docs, helm]
+  workflow_call:
+    inputs:
+      version:
+        description: Promoted release version (X.Y.Z); empty uses the tag ref
+        required: false
+        type: string
+        default: ''
+      channel:
+        description: Channel to (re)publish; empty publishes every channel
+        required: false
+        type: string
+        default: ''
+    secrets:
+      RELEASE_FLOW_S3_ACCESS_KEY_ID:
+        required: false
+      RELEASE_FLOW_S3_SECRET_ACCESS_KEY:
+        required: false
+      CARGO_REGISTRY_TOKEN:
+        required: false
+      OCI_USERNAME:
+        required: false
+      OCI_PASSWORD:
+        required: false
 
 permissions:
   contents: read
@@ -27,36 +52,61 @@ defaults:
   run:
     shell: bash
 
+# A non-empty inputs.version wins, including when the caller event is push.
+# Empty inputs (direct tag push, or a caller forwarding empty inputs) use the tag ref.
+# A job runs when inputs.channel is empty or equals that channel.
 env:
-  VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+  VERSION: ${{ inputs.version || github.ref_name }}
   RELEASE_FLOW_STORAGE_URI: ${{ vars.RELEASE_FLOW_STORAGE_URI }}
   RELEASE_FLOW_AWS_ROLE_ARN: ${{ vars.RELEASE_FLOW_AWS_ROLE_ARN }}
 
 jobs:
   github-release:
     name: Publish GitHub Release
-    if: github.event_name == 'push' || inputs.channel == 'github-release'
+    if: inputs.channel == '' || inputs.channel == 'github-release'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: publish-github-release
     concurrency:
-      group: publish-github-release-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      group: publish-github-release-${{ inputs.version || github.ref_name }}
       cancel-in-progress: false
     permissions:
       contents: write
       id-token: write
     steps:
-      - name: Checkout publisher code
+      - name: Checkout project at the release ref
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Checkout release-flow pipeline (this workflow's own commit)
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-flow-pipeline
+          persist-credentials: false
+
+      - name: Pin release-flow pipeline
+        id: pipeline
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          bash .release-flow-pipeline/scripts/pipeline-pin.sh \
+            --checkout .release-flow-pipeline --dest "${RUNNER_TEMP}/release-flow" \
+            --workflow-repository "${RF_WORKFLOW_REPOSITORY}" --workflow-ref "${RF_WORKFLOW_REF}" \
+            --workflow-sha "${RF_WORKFLOW_SHA}" --repository "${GITHUB_REPOSITORY}" --commit "${GITHUB_SHA}" \
+            | tee -a "${GITHUB_OUTPUT}"
+          echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
+
       - name: Storage credentials
         env:
           RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
           RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
-        run: bash scripts/storage/ci-credentials.sh
+        run: bash "${RF_PIPELINE}/scripts/storage/ci-credentials.sh"
 
       - name: Publish
         env:
@@ -64,38 +114,60 @@ jobs:
           RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
         run: |
           rc=0
-          bash scripts/publication/publish.sh --version "${VERSION}" --channel github-release || rc=$?
+          bash "${RF_PIPELINE}/scripts/publication/publish.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --channel github-release || rc=$?
           if (( rc == 7 )); then echo "::notice::github-release is not configured; skipped"; exit 0; fi
           exit "${rc}"
 
   oci:
     name: Publish OCI image
-    if: github.event_name == 'push' || inputs.channel == 'oci'
+    if: inputs.channel == '' || inputs.channel == 'oci'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: publish-oci
     concurrency:
-      group: publish-oci-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      group: publish-oci-${{ inputs.version || github.ref_name }}
       cancel-in-progress: false
     permissions:
       contents: read
       packages: write
       id-token: write
     steps:
-      - name: Checkout publisher code
+      - name: Checkout project at the release ref
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Checkout release-flow pipeline (this workflow's own commit)
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-flow-pipeline
+          persist-credentials: false
+
+      - name: Pin release-flow pipeline
+        id: pipeline
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          bash .release-flow-pipeline/scripts/pipeline-pin.sh \
+            --checkout .release-flow-pipeline --dest "${RUNNER_TEMP}/release-flow" \
+            --workflow-repository "${RF_WORKFLOW_REPOSITORY}" --workflow-ref "${RF_WORKFLOW_REF}" \
+            --workflow-sha "${RF_WORKFLOW_SHA}" --repository "${GITHUB_REPOSITORY}" --commit "${GITHUB_SHA}" \
+            | tee -a "${GITHUB_OUTPUT}"
+          echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
+
       - name: Storage credentials
         env:
           RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
           RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
-        run: bash scripts/storage/ci-credentials.sh
+        run: bash "${RF_PIPELINE}/scripts/storage/ci-credentials.sh"
 
       - name: Install ORAS (pinned, checksum-verified)
-        run: bash scripts/publication/ci-install-oras.sh
+        run: bash "${RF_PIPELINE}/scripts/publication/ci-install-oras.sh"
 
       - name: Registry login
         env:
@@ -124,34 +196,56 @@ jobs:
           RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
         run: |
           rc=0
-          bash scripts/publication/publish.sh --version "${VERSION}" --channel oci || rc=$?
+          bash "${RF_PIPELINE}/scripts/publication/publish.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --channel oci || rc=$?
           if (( rc == 7 )); then echo "::notice::oci is not configured; skipped"; exit 0; fi
           exit "${rc}"
 
   crates-io:
     name: Publish to crates.io
-    if: github.event_name == 'push' || inputs.channel == 'crates-io'
+    if: inputs.channel == '' || inputs.channel == 'crates-io'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: publish-crates-io
     concurrency:
-      group: publish-crates-io-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      group: publish-crates-io-${{ inputs.version || github.ref_name }}
       cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
     steps:
-      - name: Checkout publisher code
+      - name: Checkout project at the release ref
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Checkout release-flow pipeline (this workflow's own commit)
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-flow-pipeline
+          persist-credentials: false
+
+      - name: Pin release-flow pipeline
+        id: pipeline
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          bash .release-flow-pipeline/scripts/pipeline-pin.sh \
+            --checkout .release-flow-pipeline --dest "${RUNNER_TEMP}/release-flow" \
+            --workflow-repository "${RF_WORKFLOW_REPOSITORY}" --workflow-ref "${RF_WORKFLOW_REF}" \
+            --workflow-sha "${RF_WORKFLOW_SHA}" --repository "${GITHUB_REPOSITORY}" --commit "${GITHUB_SHA}" \
+            | tee -a "${GITHUB_OUTPUT}"
+          echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
+
       - name: Storage credentials
         env:
           RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
           RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
-        run: bash scripts/storage/ci-credentials.sh
+        run: bash "${RF_PIPELINE}/scripts/storage/ci-credentials.sh"
 
       # crates-io.sh repackages with `cargo +<version>` recorded in the
       # manifest (build_info.tools.cargo), so exactly that toolchain must be
@@ -168,7 +262,7 @@ jobs:
             exit 0
           fi
           toolchain=""
-          if bash scripts/publication/resolve.sh --version "${VERSION}" --out "${RUNNER_TEMP}/rf-toolchain" >/dev/null; then
+          if bash "${RF_PIPELINE}/scripts/publication/resolve.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --out "${RUNNER_TEMP}/rf-toolchain" >/dev/null; then
             toolchain="$(jq -r '.build_info.tools.cargo // empty' "${RUNNER_TEMP}/rf-toolchain/artifacts/manifest.json" \
               | sed -n 's/^cargo \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
           fi
@@ -192,34 +286,56 @@ jobs:
             unset CARGO_REGISTRY_TOKEN
           fi
           rc=0
-          bash scripts/publication/publish.sh --version "${VERSION}" --channel crates-io || rc=$?
+          bash "${RF_PIPELINE}/scripts/publication/publish.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --channel crates-io || rc=$?
           if (( rc == 7 )); then echo "::notice::crates-io is not configured; skipped"; exit 0; fi
           exit "${rc}"
 
   docs:
     name: Publish documentation
-    if: github.event_name == 'push' || inputs.channel == 'docs'
+    if: inputs.channel == '' || inputs.channel == 'docs'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: publish-docs
     concurrency:
-      group: publish-docs-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      group: publish-docs-${{ inputs.version || github.ref_name }}
       cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
     steps:
-      - name: Checkout publisher code
+      - name: Checkout project at the release ref
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Checkout release-flow pipeline (this workflow's own commit)
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-flow-pipeline
+          persist-credentials: false
+
+      - name: Pin release-flow pipeline
+        id: pipeline
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          bash .release-flow-pipeline/scripts/pipeline-pin.sh \
+            --checkout .release-flow-pipeline --dest "${RUNNER_TEMP}/release-flow" \
+            --workflow-repository "${RF_WORKFLOW_REPOSITORY}" --workflow-ref "${RF_WORKFLOW_REF}" \
+            --workflow-sha "${RF_WORKFLOW_SHA}" --repository "${GITHUB_REPOSITORY}" --commit "${GITHUB_SHA}" \
+            | tee -a "${GITHUB_OUTPUT}"
+          echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
+
       - name: Storage credentials
         env:
           RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
           RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
-        run: bash scripts/storage/ci-credentials.sh
+        run: bash "${RF_PIPELINE}/scripts/storage/ci-credentials.sh"
 
       - name: Publish
         env:
@@ -227,34 +343,56 @@ jobs:
           RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
         run: |
           rc=0
-          bash scripts/publication/publish.sh --version "${VERSION}" --channel docs || rc=$?
+          bash "${RF_PIPELINE}/scripts/publication/publish.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --channel docs || rc=$?
           if (( rc == 7 )); then echo "::notice::docs is not configured; skipped"; exit 0; fi
           exit "${rc}"
 
   helm:
     name: Publish Helm chart
-    if: github.event_name == 'push' || inputs.channel == 'helm'
+    if: inputs.channel == '' || inputs.channel == 'helm'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: publish-helm
     concurrency:
-      group: publish-helm-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      group: publish-helm-${{ inputs.version || github.ref_name }}
       cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
     steps:
-      - name: Checkout publisher code
+      - name: Checkout project at the release ref
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Checkout release-flow pipeline (this workflow's own commit)
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-flow-pipeline
+          persist-credentials: false
+
+      - name: Pin release-flow pipeline
+        id: pipeline
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          bash .release-flow-pipeline/scripts/pipeline-pin.sh \
+            --checkout .release-flow-pipeline --dest "${RUNNER_TEMP}/release-flow" \
+            --workflow-repository "${RF_WORKFLOW_REPOSITORY}" --workflow-ref "${RF_WORKFLOW_REF}" \
+            --workflow-sha "${RF_WORKFLOW_SHA}" --repository "${GITHUB_REPOSITORY}" --commit "${GITHUB_SHA}" \
+            | tee -a "${GITHUB_OUTPUT}"
+          echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
+
       - name: Storage credentials
         env:
           RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
           RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
-        run: bash scripts/storage/ci-credentials.sh
+        run: bash "${RF_PIPELINE}/scripts/storage/ci-credentials.sh"
 
       - name: Publish
         env:
@@ -262,6 +400,6 @@ jobs:
           RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
         run: |
           rc=0
-          bash scripts/publication/publish.sh --version "${VERSION}" --channel helm || rc=$?
+          bash "${RF_PIPELINE}/scripts/publication/publish.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --channel helm || rc=$?
           if (( rc == 7 )); then echo "::notice::helm is not configured; skipped"; exit 0; fi
           exit "${rc}"

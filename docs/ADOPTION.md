@@ -54,6 +54,7 @@ The installer copies these files into your repository:
 | `scripts/publishers/{github-release,oci,crates-io,docs,helm}.sh` | Channel publishers (`observe` / `apply`) |
 | `.github/workflows/candidate.yml` | GitHub Actions candidate pipeline (the only artifact builder) |
 | `.github/workflows/release.yml` | One independent publish job per channel (tag push or dispatch) |
+| `scripts/pipeline-pin.sh` | Pins release-flow scripts to this workflow's commit (`job.workflow_sha`) and rejects an unpinned or mismatched call |
 | `scripts/adapters/cargo.sh` | Cargo reference adapter (only with `--with-cargo-adapter`) |
 
 The bundle also carries `docs/RULESETS.md` and `docs/rulesets/*.json` (repository rulesets to apply before the first promotion).
@@ -72,6 +73,94 @@ bash release-flow-bundle-<V>/install.sh --target . --check      # read-only: com
 ### Manual installation (fallback)
 
 Without the bundle, copy the files in the table above from this repository, plus `.release-flow.json` and an adapter script implementing the Adapter Protocol v1 (§3). You then have to track upgrades yourself.
+
+### Reusable workflows at a pinned SHA (no vendored scripts)
+
+Use this when another repository should run release-flow's candidate and publish pipelines by calling this repository at a pinned commit, instead of copying the scripts. The versioned bundle remains the offline and frozen option: it installs the workflows and scripts into the adopter and does not depend on github.com reusable workflows.
+
+The adopter commits:
+
+1. `.github/workflows/candidate.yml` and `.github/workflows/release.yml`, copied from the templates below with `__RELEASE_FLOW_SHA__` replaced by the full commit SHA. The file names and the job ids `candidate` and `release` are fixed: promotion's default workflow path, `release-retry` dispatching `release.yml`, and crates.io Trusted Publishing all depend on them. Do not set `concurrency` on the caller (it can deadlock with the called workflow's group). Pass `secrets: inherit`.
+2. `.release-flow.json` with the same pin, plus the reusable job name:
+
+```json
+{
+  "pipeline": { "repository": "nbari/release-flow", "sha": "<40 lowercase hex>" },
+  "promotion": { "required_job": "candidate / Candidate OK" }
+}
+```
+
+3. The project's own adapter, as today.
+4. Repository settings in the adopter's repo: an Actions policy that allows reusable workflows from `nbari/release-flow`; the `candidate-storage` and `publish-*` environments, with their variables and secrets; and the `main` ruleset's required status check renamed to `candidate / Candidate OK`.
+
+<!-- release-flow caller: docs/callers/candidate.yml -->
+```yaml
+# release-flow candidate pipeline, called at a pinned commit. Copy to
+# .github/workflows/candidate.yml; replace __RELEASE_FLOW_SHA__ with the full
+# commit SHA that .release-flow.json "pipeline.sha" also names.
+name: Candidate
+
+on:
+  push:
+    branches: ['release/**']
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    uses: nbari/release-flow/.github/workflows/candidate.yml@__RELEASE_FLOW_SHA__
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+```
+
+<!-- release-flow caller: docs/callers/release.yml -->
+```yaml
+# release-flow publishers, called at a pinned commit. Copy to
+# .github/workflows/release.yml; replace __RELEASE_FLOW_SHA__ with the full
+# commit SHA that .release-flow.json "pipeline.sha" also names.
+name: Release
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Promoted release version (X.Y.Z)
+        required: true
+        type: string
+      channel:
+        description: Channel to (re)publish
+        required: true
+        type: choice
+        options: [github-release, oci, crates-io, docs, helm]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    uses: nbari/release-flow/.github/workflows/release.yml@__RELEASE_FLOW_SHA__
+    with:
+      version: ${{ inputs.version }}
+      channel: ${{ inputs.channel }}
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    secrets: inherit
+```
+
+The `uses:` ref must be the full commit SHA, not a branch or tag. `scripts/pipeline-pin.sh` enforces that at run time against `job.workflow_sha`, and promotion check PF13 requires the candidate run to have called exactly `<pipeline.repository>/.github/workflows/candidate.yml@<pipeline.sha>`. Bump the pin in one develop commit that changes both `uses:` lines and `pipeline.sha` together. A candidate commit still cannot touch `.github/*` or `.release-flow.json` (PF09).
+
+This path works on github.com only (`job.workflow_repository`, `job.workflow_sha` and `job.workflow_ref` are not available on GitHub Enterprise Server). A called job's `environment:` is an environment in the adopter's repo. crates.io Trusted Publishing still matches the caller file `release.yml` and the environment `publish-crates-io`.
+
+Local commands stay local. From a release-flow checkout at `pipeline.sha`, run `scripts/release-deploy.sh`, `scripts/release-promote.sh`, `scripts/release-status.sh` and `scripts/release-retry.sh` with `--project-dir` pointing at the adopter. Promotion stays a local command because pushes made with `GITHUB_TOKEN` do not start workflows.
+
+Recovery: `release-retry` dispatches the caller's `release.yml` on `promotion.publisher_ref`. Newer publisher code means bumping the pin on develop and dispatching with `--ref develop`.
 
 ---
 
@@ -112,6 +201,7 @@ Promotion and publishing need the optional blocks below (see `docs/release-flow.
 | `promotion.publisher_ref` | Ref `release-retry` dispatches `release.yml` on (default `main`). |
 | `storage.uri` | `file:///abs/path` or `s3://bucket/prefix` (`RELEASE_FLOW_STORAGE_URI` overrides); `storage.region`, `storage.endpoint` for S3-compatible stores. |
 | `publishers.<channel>` | `github-release` (`assets` globs), `oci` (`artifact`, `repository`, `tags`, `latest_tag`), `crates-io` (`artifact`, `package`, `index_url`; see §9), `docs` (`artifact`, `uri`, `latest`), `helm` (`artifact`, `uri`, `base_url`; the chart's `Chart.yaml` version must equal the release version); each has `required` (counts towards `PUBLISHED`). |
+| `pipeline.repository` / `pipeline.sha` | Optional pin of the reusable workflows (`owner/name` and a full 40-hex commit). Absent means this repository's own, or bundle-installed, workflows. See the pinned-SHA subsection of §1. |
 
 ---
 
@@ -306,6 +396,8 @@ When a candidate branch is pushed to GitHub, `.github/workflows/candidate.yml` r
 6. **`retain`** (production candidates, storage configured): stores every blob and the candidate record, create-only, from the `candidate-storage` environment.
 7. **`report`** (`Candidate OK`): Fails closed if any step failed; publishes a GitHub Step Summary.
 
+Each of `guard`, `assemble`, `verify` and `retain` also checks out the workflow's own commit (`job.workflow_sha`) and runs `scripts/pipeline-pin.sh`, so the scripts always come from the workflow that is running and the project tree stays the caller's.
+
 ### Verifier CLI
 
 ```bash
@@ -346,6 +438,8 @@ just release-promote release/X.Y.Z-<base12> <candidate-sha>
 
 Exit codes: `0` promoted or already promoted, `3` precondition rejected (nothing changed), `9` another promotion running, `10` push rejected (rerun reuses the local tag), `11` outcome unknown (rerun reconciles first), `12` version promoted with a different identity, `13` inconsistent remote refs (manual), `14` promoted but GitHub reports the tag unverified.
 
+When `.release-flow.json` declares `pipeline`, PF13 also requires the candidate run to have called exactly `<pipeline.repository>/.github/workflows/candidate.yml@<pipeline.sha>`; without it, the run must call no reusable workflow.
+
 ## 9. Publishing and recovery
 
 The tag push starts `release.yml`: one job per configured channel, no `needs:`, each in its own `publish-<channel>` environment. Secrets: `CARGO_REGISTRY_TOKEN` (crates-io), `OCI_USERNAME` / `OCI_PASSWORD` (oci; `ghcr.io` falls back to the job token).
@@ -375,4 +469,4 @@ just release-retry X.Y.Z oci --break-lock       # clear an expired publication l
   - Guarded atomic promotion with signed tags and reconciliation (`scripts/release-promote.sh`).
   - Independent, idempotent publishers (GitHub Releases, OCI, crates.io, docs, Helm) with a durable ledger, status and retry.
   - Repository rulesets (`docs/RULESETS.md`, `docs/rulesets/*.json`; applied by the owner).
-  - Failure-injection suite (`tests/pipeline/`, 10 suites).
+  - Failure-injection suite (`tests/pipeline/`, 11 suites).

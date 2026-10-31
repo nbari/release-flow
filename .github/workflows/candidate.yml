@@ -2,11 +2,18 @@ name: Candidate
 
 # The only place release artifacts are built. Publishing never rebuilds: it
 # reads the bytes retained here from durable storage, pinned by the manifest
-# digest that the signed release tag carries.
+# digest that the signed release tag carries. Callable via workflow_call;
+# scripts always come from the workflow's own commit (job.workflow_sha).
 
 on:
   push:
     branches: ['release/**']
+  workflow_call:
+    secrets:
+      RELEASE_FLOW_S3_ACCESS_KEY_ID:
+        required: false
+      RELEASE_FLOW_S3_SECRET_ACCESS_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -35,6 +42,9 @@ jobs:
       adapter: ${{ steps.identity.outputs.adapter }}
       targets: ${{ steps.matrix.outputs.targets }}
       storage_uri: ${{ steps.matrix.outputs.storage_uri }}
+      pipeline_mode: ${{ steps.pipeline.outputs.pipeline_mode }}
+      pipeline_repository: ${{ steps.pipeline.outputs.pipeline_repository }}
+      pipeline_sha: ${{ steps.pipeline.outputs.pipeline_sha }}
     steps:
       - name: Checkout candidate source
         uses: actions/checkout@v7
@@ -43,13 +53,35 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Checkout release-flow pipeline (this workflow's own commit)
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-flow-pipeline
+          persist-credentials: false
+
+      - name: Pin release-flow pipeline
+        id: pipeline
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          bash .release-flow-pipeline/scripts/pipeline-pin.sh \
+            --checkout .release-flow-pipeline --dest "${RUNNER_TEMP}/release-flow" \
+            --workflow-repository "${RF_WORKFLOW_REPOSITORY}" --workflow-ref "${RF_WORKFLOW_REF}" \
+            --workflow-sha "${RF_WORKFLOW_SHA}" --repository "${GITHUB_REPOSITORY}" --commit "${GITHUB_SHA}" \
+            | tee -a "${GITHUB_OUTPUT}"
+          echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
+
       - name: Project toolchain (adapter prerequisite)
         run: rustup toolchain install stable --profile minimal
 
       - name: Verify identity and trailers
         id: identity
         run: |
-          bash scripts/candidate-guard.sh --ref "${GITHUB_REF_NAME}" --commit "${GITHUB_SHA}" | tee -a "${GITHUB_OUTPUT}"
+          bash "${RF_PIPELINE}/scripts/candidate-guard.sh" --ref "${GITHUB_REF_NAME}" --commit "${GITHUB_SHA}" | tee -a "${GITHUB_OUTPUT}"
 
       - name: Package matrix and storage
         id: matrix
@@ -57,7 +89,7 @@ jobs:
           ADAPTER: ${{ steps.identity.outputs.adapter }}
           RELEASE_FLOW_STORAGE_URI: ${{ vars.RELEASE_FLOW_STORAGE_URI }}
         run: |
-          targets="$(bash scripts/candidate-targets.sh --adapter "${ADAPTER}")"
+          targets="$(bash "${RF_PIPELINE}/scripts/candidate-targets.sh" --adapter "${ADAPTER}")"
           echo "targets=${targets}" >> "${GITHUB_OUTPUT}"
           storage_uri="${RELEASE_FLOW_STORAGE_URI:-$(jq -r '.storage.uri // empty' .release-flow.json)}"
           echo "storage_uri=${storage_uri}" >> "${GITHUB_OUTPUT}"
@@ -164,6 +196,28 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Checkout release-flow pipeline (this workflow's own commit)
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-flow-pipeline
+          persist-credentials: false
+
+      - name: Pin release-flow pipeline
+        id: pipeline
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          bash .release-flow-pipeline/scripts/pipeline-pin.sh \
+            --checkout .release-flow-pipeline --dest "${RUNNER_TEMP}/release-flow" \
+            --workflow-repository "${RF_WORKFLOW_REPOSITORY}" --workflow-ref "${RF_WORKFLOW_REF}" \
+            --workflow-sha "${RF_WORKFLOW_SHA}" --repository "${GITHUB_REPOSITORY}" --commit "${GITHUB_SHA}" \
+            | tee -a "${GITHUB_OUTPUT}"
+          echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
+
       - name: Install toolchain
         run: rustup toolchain install stable --profile minimal
 
@@ -193,7 +247,7 @@ jobs:
           CANDIDATE_BRANCH: ${{ needs.guard.outputs.candidate_branch }}
         run: |
           epoch="$(git log -1 --format=%ct)"
-          manifest_sha="$(bash scripts/candidate-manifest.sh \
+          manifest_sha="$(bash "${RF_PIPELINE}/scripts/candidate-manifest.sh" \
             --dir dist \
             --inventory "${RUNNER_TEMP}/inventory.json" \
             --project "${PROJECT}" \
@@ -215,7 +269,7 @@ jobs:
         env:
           MANIFEST_SHA256: ${{ steps.manifest.outputs.manifest_sha256 }}
         run: |
-          bash scripts/verify-candidate.sh \
+          bash "${RF_PIPELINE}/scripts/verify-candidate.sh" \
             --dir dist \
             --commit "${GITHUB_SHA}" \
             --manifest-sha256 "${MANIFEST_SHA256}"
@@ -234,11 +288,33 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Checkout verifier
+      - name: Checkout candidate source
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Checkout release-flow pipeline (this workflow's own commit)
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-flow-pipeline
+          persist-credentials: false
+
+      - name: Pin release-flow pipeline
+        id: pipeline
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          bash .release-flow-pipeline/scripts/pipeline-pin.sh \
+            --checkout .release-flow-pipeline --dest "${RUNNER_TEMP}/release-flow" \
+            --workflow-repository "${RF_WORKFLOW_REPOSITORY}" --workflow-ref "${RF_WORKFLOW_REF}" \
+            --workflow-sha "${RF_WORKFLOW_SHA}" --repository "${GITHUB_REPOSITORY}" --commit "${GITHUB_SHA}" \
+            | tee -a "${GITHUB_OUTPUT}"
+          echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
 
       - name: Download candidate artifacts
         uses: actions/download-artifact@v8
@@ -254,7 +330,7 @@ jobs:
           BASE_COMMIT: ${{ needs.guard.outputs.base_commit }}
           MANIFEST_SHA256: ${{ needs.assemble.outputs.manifest_sha256 }}
         run: |
-          bash scripts/verify-candidate.sh \
+          bash "${RF_PIPELINE}/scripts/verify-candidate.sh" \
             --dir candidate \
             --commit "${GITHUB_SHA}" \
             --version "${VERSION}" \
@@ -282,6 +358,28 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Checkout release-flow pipeline (this workflow's own commit)
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-flow-pipeline
+          persist-credentials: false
+
+      - name: Pin release-flow pipeline
+        id: pipeline
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          bash .release-flow-pipeline/scripts/pipeline-pin.sh \
+            --checkout .release-flow-pipeline --dest "${RUNNER_TEMP}/release-flow" \
+            --workflow-repository "${RF_WORKFLOW_REPOSITORY}" --workflow-ref "${RF_WORKFLOW_REF}" \
+            --workflow-sha "${RF_WORKFLOW_SHA}" --repository "${GITHUB_REPOSITORY}" --commit "${GITHUB_SHA}" \
+            | tee -a "${GITHUB_OUTPUT}"
+          echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
+
       - name: Download candidate artifacts
         uses: actions/download-artifact@v8
         with:
@@ -294,14 +392,14 @@ jobs:
           RELEASE_FLOW_AWS_ROLE_ARN: ${{ vars.RELEASE_FLOW_AWS_ROLE_ARN }}
           RELEASE_FLOW_S3_ACCESS_KEY_ID: ${{ secrets.RELEASE_FLOW_S3_ACCESS_KEY_ID }}
           RELEASE_FLOW_S3_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_FLOW_S3_SECRET_ACCESS_KEY }}
-        run: bash scripts/storage/ci-credentials.sh
+        run: bash "${RF_PIPELINE}/scripts/storage/ci-credentials.sh"
 
       - name: Store blobs and the candidate record (create-only)
         env:
           RELEASE_FLOW_STORAGE_URI: ${{ needs.guard.outputs.storage_uri }}
           MANIFEST_SHA256: ${{ needs.assemble.outputs.manifest_sha256 }}
         run: |
-          bash scripts/storage/storage.sh retain-candidate \
+          bash "${RF_PIPELINE}/scripts/storage/storage.sh" retain-candidate \
             --dir candidate \
             --manifest-sha256 "${MANIFEST_SHA256}" \
             --repository "${GITHUB_REPOSITORY}" \
@@ -324,6 +422,7 @@ jobs:
           RETAIN_RES: ${{ needs.retain.result }}
           VERSION: ${{ needs.guard.outputs.version }}
           MODE: ${{ needs.guard.outputs.mode }}
+          PIPELINE: "${{ needs.guard.outputs.pipeline_mode }} ${{ needs.guard.outputs.pipeline_repository }}@${{ needs.guard.outputs.pipeline_sha }}"
           STORAGE_URI: ${{ needs.guard.outputs.storage_uri }}
           COMMIT: ${{ github.sha }}
           MANIFEST_SHA: ${{ needs.assemble.outputs.manifest_sha256 }}
@@ -335,6 +434,7 @@ jobs:
           | --- | --- |
           | Version | ${VERSION:-unknown} |
           | Mode | ${MODE:-unknown} |
+          | Pipeline | ${PIPELINE} |
           | Candidate Commit | \`${COMMIT}\` |
           | Manifest SHA256 | \`${MANIFEST_SHA:-unknown}\` |
           | Guard | ${GUARD_RES} |

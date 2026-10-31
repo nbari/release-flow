@@ -28,6 +28,7 @@ PAYLOAD=(
   scripts/lib/github.sh
   scripts/lib/schema.sh
   scripts/lib/tag.sh
+  scripts/pipeline-pin.sh
   scripts/storage/storage.sh
   scripts/storage/ci-credentials.sh
   scripts/storage/backends/fs.sh

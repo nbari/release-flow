@@ -69,7 +69,7 @@ def publisher($name; $ks):
       opt("latest"; type == "boolean"; $name + ".latest must be a boolean")
     else empty end)
   end;
-allowed(["schema_version","project","adapter","remote","production_base","test_base","repository","promotion","storage","publishers"]),
+allowed(["schema_version","project","adapter","remote","production_base","test_base","repository","promotion","storage","publishers","pipeline"]),
 (.schema_version | need(. == 1; "schema_version must be 1")),
 (.project | need(project; "invalid project")),
 (.adapter | need(nonempty; "invalid adapter")),
@@ -112,6 +112,10 @@ opt("repository"; repo; "invalid repository"),
     (if (.docs // null) != null then .docs | need(has("artifact") and has("uri"); "docs requires artifact and uri") else empty end),
     (if (.helm // null) != null then .helm | need(has("artifact") and has("uri") and has("base_url"); "helm requires artifact, uri and base_url") else empty end)
   else empty end)
+ else empty end),
+(if has("pipeline") then .pipeline | exact(["repository","sha"]),
+  (if type == "object" then (.repository | need(repo; "invalid pipeline.repository")),
+                             (.sha | need(commit; "invalid pipeline.sha")) else empty end)
  else empty end)
 '
 

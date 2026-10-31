@@ -269,7 +269,7 @@ See [ADOPTION.md](docs/ADOPTION.md) for the deploy module, the versioned install
 | Worktree + versioned temporary candidate | **Implemented** | Isolated worktree preparation; no production ref changes |
 | Reusable adapter contract & Cargo reference | **Implemented** | Project-independent adapter protocol v1 |
 | Exact-SHA candidate pipeline & manifest v1 | **Implemented** | Same-run verification; pinned manifest hash; independent verifier |
-| Pipeline failure-injection test suite | **Implemented** | All 10 test suites pass in `just check` |
+| Pipeline failure-injection test suite | **Implemented** | All 11 test suites pass in `just check` |
 | Branch-aware `just deploy` + versioned bundle | **Implemented** | Branch policy, rejection-without-changes and bundle installer suites pass |
 | Atomic exact-SHA promotion + signed tag + rulesets | **Implemented** | PR01–PR18 (race, stale branch, rejected and lost pushes, interruption, protection, signing) |
 | Durable manifest + independent publishers | **Implemented** | ST01–ST09, PB01–PB11: retry one publisher without rebuilding or retagging |
