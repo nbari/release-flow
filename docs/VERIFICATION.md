@@ -256,7 +256,7 @@ macOS packaging did run successfully. Centralized workflows require github.com.
 | Just deploy, shell adapter, bundle install and managed upgrade | **IMPLEMENTED**, **TESTED LOCALLY**, **VERIFIED ON GITHUB** |
 | Native multi-platform candidate and artifact verification | **IMPLEMENTED**, **TESTED LOCALLY**, **VERIFIED ON GITHUB** |
 | Marketplace agreement, name acceptance, categories and listing | **NOT YET ACTIVATED**; owner UI authorization required |
-# GitHub-only storage follow-up
+## GitHub-only storage follow-up
 
 The `github://owner/repo` backend passed `just check`, `just pipeline-test`,
 actionlint (with the existing narrow context-schema exception), ShellCheck,
@@ -271,5 +271,29 @@ A real API smoke test in the isolated public repository
 sealed and downloaded byte-identical fixture data. GitHub reports the internal
 storage release `immutable: true`. Real concurrent creates returned `5` and `0`;
 the wrong lock owner was refused and the correct owner released its lock.
-These API checks alone do not establish reusable-workflow retention: the
-cross-repository job-token test is recorded separately after actual execution.
+The complete pinned cross-repository test also passed on GitHub:
+
+| Check | Actual run and result |
+| --- | --- |
+| Root `uses: ./`, Rust checks and all pipeline suites | [41237424994](https://github.com/nbari/release-flow/actions/runs/41237424994), success at `a58feb2913475458d2a0c02567fa72feeadc87e5` |
+| Consumer Marketplace Action at that full SHA | [41237454657](https://github.com/nbari/release-flow-storage-test-20261031/actions/runs/41237454657), success |
+| Consumer reusable candidate, including GitHub-token retention | [41237455845](https://github.com/nbari/release-flow-storage-test-20261031/actions/runs/41237455845), all seven jobs succeeded |
+| Mismatched configured runtime SHA | [41237744444](https://github.com/nbari/release-flow-storage-test-20261031/actions/runs/41237744444), expected guard rejection |
+| Mutable `@sandbox` workflow reference | [41237745281](https://github.com/nbari/release-flow-storage-test-20261031/actions/runs/41237745281), expected guard rejection |
+
+The shell consumer source was
+`d0ddf669682c952dc45f20bb19071c7d6b5695f4`; referenced workflow metadata and
+`build_info.release_flow.sha` both identify runtime
+`a58feb2913475458d2a0c02567fa72feeadc87e5`. Its verified manifest SHA256 is
+`d0d91a3780403f332643d80748bfb2650ea8aac8d7a40e5291a4866c93fd3f43`.
+Independent materialization from GitHub storage matched every Actions artifact
+byte. The synthetic production-mode candidate exercised retention only in the
+isolated test repository; it was never promoted. The negative runs skipped all
+build and retention jobs, and the storage branch head remained unchanged.
+
+The private test repository could not enforce rulesets on this account's Free
+plan, so storage was tested in the separate public test repository. The backend
+refuses unavailable protections. No AWS resources or production publisher
+credentials were used. Real crates.io publication and Marketplace account/legal
+activation remain separate owner steps; OIDC permission alone does not exchange
+a crates.io publishing token.
