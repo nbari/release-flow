@@ -13,7 +13,8 @@ permissions:
 jobs:
   candidate:
     uses: nbari/release-flow/.github/workflows/candidate.yml@__RELEASE_FLOW_SHA__
+    with:
+      adapter: tools/adapter.sh
     permissions:
       contents: read
       id-token: write
-    secrets: inherit

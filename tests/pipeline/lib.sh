@@ -20,7 +20,7 @@ export GIT_AUTHOR_NAME="Pipeline Tester"
 export GIT_AUTHOR_EMAIL="tester@example.com"
 export GIT_COMMITTER_NAME="Pipeline Tester"
 export GIT_COMMITTER_EMAIL="tester@example.com"
-unset GIT_DIR GIT_WORK_TREE
+unset GIT_DIR GIT_WORK_TREE GITHUB_ACTIONS
 # Outside just settings must not leak into fixture runs.
 unset JUST_JUSTFILE JUST_WORKING_DIRECTORY
 export LC_ALL=C

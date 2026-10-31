@@ -54,16 +54,76 @@ defaults:
 
 # A non-empty inputs.version wins, including when the caller event is push.
 # Empty inputs (direct tag push, or a caller forwarding empty inputs) use the tag ref.
-# A job runs when inputs.channel is empty or equals that channel.
+# A read-only plan rejects unknown/unconfigured selections before publisher jobs.
 env:
   VERSION: ${{ inputs.version || github.ref_name }}
   RELEASE_FLOW_STORAGE_URI: ${{ vars.RELEASE_FLOW_STORAGE_URI }}
   RELEASE_FLOW_AWS_ROLE_ARN: ${{ vars.RELEASE_FLOW_AWS_ROLE_ARN }}
 
 jobs:
+  plan:
+    name: Validate publisher selection
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      github-release: ${{ steps.selection.outputs.github-release }}
+      oci: ${{ steps.selection.outputs.oci }}
+      crates-io: ${{ steps.selection.outputs.crates-io }}
+      docs: ${{ steps.selection.outputs.docs }}
+      helm: ${{ steps.selection.outputs.helm }}
+      channels: ${{ steps.selection.outputs.channels }}
+    steps:
+      - name: Checkout project at the release ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require immutable runtime identity before checkout
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "${RF_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ && "${RF_WORKFLOW_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo '::error::Missing immutable workflow identity; github.com is required'; exit 1; }
+          case "${RF_WORKFLOW_REF}" in
+            "${RF_WORKFLOW_REPOSITORY}/.github/workflows/release.yml@"*) ;;
+            *) echo '::error::Unexpected workflow identity'; exit 1 ;;
+          esac
+          test ! -e .release-flow-pipeline && test ! -L .release-flow-pipeline
+
+      - name: Checkout release-flow pipeline (this workflow's own commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-flow-pipeline
+          persist-credentials: false
+
+      - name: Pin release-flow pipeline
+        id: pipeline
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          bash .release-flow-pipeline/scripts/pipeline-pin.sh \
+            --checkout .release-flow-pipeline --dest "${RUNNER_TEMP}/release-flow" \
+            --workflow-repository "${RF_WORKFLOW_REPOSITORY}" --workflow-ref "${RF_WORKFLOW_REF}" \
+            --workflow-sha "${RF_WORKFLOW_SHA}" --repository "${GITHUB_REPOSITORY}" --commit "${GITHUB_SHA}" \
+            | tee -a "${GITHUB_OUTPUT}"
+          echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
+
+      - name: Select configured publishers
+        id: selection
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: bash "${RF_PIPELINE}/scripts/publication/plan.sh" "${VERSION}" "${CHANNEL}" | tee -a "${GITHUB_OUTPUT}"
+
   github-release:
     name: Publish GitHub Release
-    if: inputs.channel == '' || inputs.channel == 'github-release'
+    needs: plan
+    if: needs.plan.outputs.github-release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: publish-github-release
@@ -75,13 +135,26 @@ jobs:
       id-token: write
     steps:
       - name: Checkout project at the release ref
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Require immutable runtime identity before checkout
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "${RF_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ && "${RF_WORKFLOW_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo '::error::Missing immutable workflow identity; github.com is required'; exit 1; }
+          case "${RF_WORKFLOW_REF}" in
+            "${RF_WORKFLOW_REPOSITORY}/.github/workflows/release.yml@"*) ;;
+            *) echo '::error::Unexpected workflow identity'; exit 1 ;;
+          esac
+          test ! -e .release-flow-pipeline && test ! -L .release-flow-pipeline
+
       - name: Checkout release-flow pipeline (this workflow's own commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -115,12 +188,12 @@ jobs:
         run: |
           rc=0
           bash "${RF_PIPELINE}/scripts/publication/publish.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --channel github-release || rc=$?
-          if (( rc == 7 )); then echo "::notice::github-release is not configured; skipped"; exit 0; fi
           exit "${rc}"
 
   oci:
     name: Publish OCI image
-    if: inputs.channel == '' || inputs.channel == 'oci'
+    needs: plan
+    if: needs.plan.outputs.oci == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: publish-oci
@@ -133,13 +206,26 @@ jobs:
       id-token: write
     steps:
       - name: Checkout project at the release ref
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Require immutable runtime identity before checkout
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "${RF_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ && "${RF_WORKFLOW_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo '::error::Missing immutable workflow identity; github.com is required'; exit 1; }
+          case "${RF_WORKFLOW_REF}" in
+            "${RF_WORKFLOW_REPOSITORY}/.github/workflows/release.yml@"*) ;;
+            *) echo '::error::Unexpected workflow identity'; exit 1 ;;
+          esac
+          test ! -e .release-flow-pipeline && test ! -L .release-flow-pipeline
+
       - name: Checkout release-flow pipeline (this workflow's own commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -197,12 +283,12 @@ jobs:
         run: |
           rc=0
           bash "${RF_PIPELINE}/scripts/publication/publish.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --channel oci || rc=$?
-          if (( rc == 7 )); then echo "::notice::oci is not configured; skipped"; exit 0; fi
           exit "${rc}"
 
   crates-io:
     name: Publish to crates.io
-    if: inputs.channel == '' || inputs.channel == 'crates-io'
+    needs: plan
+    if: needs.plan.outputs.crates-io == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: publish-crates-io
@@ -214,13 +300,26 @@ jobs:
       id-token: write
     steps:
       - name: Checkout project at the release ref
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Require immutable runtime identity before checkout
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "${RF_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ && "${RF_WORKFLOW_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo '::error::Missing immutable workflow identity; github.com is required'; exit 1; }
+          case "${RF_WORKFLOW_REF}" in
+            "${RF_WORKFLOW_REPOSITORY}/.github/workflows/release.yml@"*) ;;
+            *) echo '::error::Unexpected workflow identity'; exit 1 ;;
+          esac
+          test ! -e .release-flow-pipeline && test ! -L .release-flow-pipeline
+
       - name: Checkout release-flow pipeline (this workflow's own commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -287,12 +386,12 @@ jobs:
           fi
           rc=0
           bash "${RF_PIPELINE}/scripts/publication/publish.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --channel crates-io || rc=$?
-          if (( rc == 7 )); then echo "::notice::crates-io is not configured; skipped"; exit 0; fi
           exit "${rc}"
 
   docs:
     name: Publish documentation
-    if: inputs.channel == '' || inputs.channel == 'docs'
+    needs: plan
+    if: needs.plan.outputs.docs == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: publish-docs
@@ -304,13 +403,26 @@ jobs:
       id-token: write
     steps:
       - name: Checkout project at the release ref
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Require immutable runtime identity before checkout
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "${RF_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ && "${RF_WORKFLOW_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo '::error::Missing immutable workflow identity; github.com is required'; exit 1; }
+          case "${RF_WORKFLOW_REF}" in
+            "${RF_WORKFLOW_REPOSITORY}/.github/workflows/release.yml@"*) ;;
+            *) echo '::error::Unexpected workflow identity'; exit 1 ;;
+          esac
+          test ! -e .release-flow-pipeline && test ! -L .release-flow-pipeline
+
       - name: Checkout release-flow pipeline (this workflow's own commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -344,12 +456,12 @@ jobs:
         run: |
           rc=0
           bash "${RF_PIPELINE}/scripts/publication/publish.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --channel docs || rc=$?
-          if (( rc == 7 )); then echo "::notice::docs is not configured; skipped"; exit 0; fi
           exit "${rc}"
 
   helm:
     name: Publish Helm chart
-    if: inputs.channel == '' || inputs.channel == 'helm'
+    needs: plan
+    if: needs.plan.outputs.helm == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: publish-helm
@@ -361,13 +473,26 @@ jobs:
       id-token: write
     steps:
       - name: Checkout project at the release ref
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Require immutable runtime identity before checkout
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "${RF_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ && "${RF_WORKFLOW_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo '::error::Missing immutable workflow identity; github.com is required'; exit 1; }
+          case "${RF_WORKFLOW_REF}" in
+            "${RF_WORKFLOW_REPOSITORY}/.github/workflows/release.yml@"*) ;;
+            *) echo '::error::Unexpected workflow identity'; exit 1 ;;
+          esac
+          test ! -e .release-flow-pipeline && test ! -L .release-flow-pipeline
+
       - name: Checkout release-flow pipeline (this workflow's own commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -401,5 +526,21 @@ jobs:
         run: |
           rc=0
           bash "${RF_PIPELINE}/scripts/publication/publish.sh" --project-dir "${GITHUB_WORKSPACE}" --version "${VERSION}" --channel helm || rc=$?
-          if (( rc == 7 )); then echo "::notice::helm is not configured; skipped"; exit 0; fi
           exit "${rc}"
+
+  report:
+    name: Publication result
+    if: always()
+    needs: [plan, github-release, oci, crates-io, docs, helm]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require each selected publisher to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          printf '%s' "${RESULTS}" | jq -e '
+            . as $n | .plan.result == "success" and
+            all(["github-release","oci","crates-io","docs","helm"][];
+              . as $c | if $n.plan.outputs[$c] == "true" then $n[$c].result == "success"
+              else $n[$c].result == "skipped" end)'

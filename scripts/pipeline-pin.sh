@@ -7,8 +7,8 @@
 #
 # Call mode (the workflow repo is not the caller's repo) requires a full-SHA
 # uses: pin that matches .release-flow.json "pipeline". Local mode rejects a
-# declared pipeline. Empty job.workflow_* (for example GHES) is local mode
-# only, and only when the checkout HEAD equals --commit.
+# declared pipeline. Missing job.workflow_* is rejected: no mutable checkout
+# fallback is supported. These fields require github.com.
 #
 # All checks run before the checkout is moved. stdout (key=value):
 #   pipeline_mode pipeline_repository pipeline_sha
@@ -95,18 +95,13 @@ mode=""
 pipe_repo=""
 pipe_sha=""
 if [[ -z "${wf_sha}" ]]; then
-  if [[ -n "${wf_repo}" || -n "${wf_ref}" ]]; then
-    rf_die "job.workflow_sha is empty but job.workflow_repository or job.workflow_ref is set" 3
-  fi
-  if [[ -n "${decl_repo}" ]]; then
-    rf_die "a pinned pipeline requires job.workflow_* (github.com)" 3
-  fi
-  if [[ "${head}" != "${commit}" ]]; then
-    rf_die "pipeline checkout HEAD (${head}) != ${commit}" 3
-  fi
-  mode="local"
-  pipe_sha="${head}"
+  rf_die "Runtime pinning requires job.workflow_* (github.com); no fallback is allowed" 3
 else
+  [[ "${wf_repo}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "${commit}" =~ ${RF_RE_COMMIT} ]] || rf_die "Invalid workflow repository or consumer SHA" 3
+  case "${wf_ref}" in
+    "${wf_repo}/.github/workflows/candidate.yml@"*|"${wf_repo}/.github/workflows/release.yml@"*) ;;
+    *) rf_die "Unexpected release-flow workflow identity: ${wf_ref}" 3 ;;
+  esac
   if [[ ! "${wf_sha}" =~ ^[0-9a-f]{40}$ ]]; then
     rf_die "job.workflow_sha is not a full commit SHA: ${wf_sha}" 3
   fi

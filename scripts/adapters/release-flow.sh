@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# release-flow-adapter: 1
 # Project adapter for release-flow itself: the Cargo reference adapter per
 # platform, plus the platform-independent artifacts (target "any"): the
 # versioned distribution bundle (release-flow-bundle-<V>.tar.gz) and the
@@ -61,8 +62,17 @@ package_name() {
 }
 
 case "${subcommand}" in
-  version|set-version|verify)
+  version|set-version)
     exec "${dir}/cargo.sh" "$@"
+    ;;
+
+  verify)
+    "${dir}/cargo.sh" verify
+    if [[ "${GITHUB_ACTIONS:-}" == true ]] && ! command -v just >/dev/null 2>&1; then
+      bash "${root}/tests/pipeline/ci-install-just.sh"
+      export PATH="${RUNNER_TEMP}/just-bin:${PATH}"
+    fi
+    bash "${root}/tests/pipeline/run.sh"
     ;;
 
   targets)

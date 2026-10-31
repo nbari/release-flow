@@ -11,7 +11,7 @@ This document describes how to adopt `release-flow` in any project, regardless o
 release-flow ships as `release-flow-bundle-<V>.tar.gz`. Every validated release-flow candidate includes it as an artifact, and you can build it from a checkout of this repository (GNU tar required):
 
 ```bash
-bash scripts/release-flow-bundle.sh --version <V> --out dist
+bash scripts/release-flow-bundle.sh --version <V> --out dist --workflow-mode reusable
 ```
 
 Install it into your repository (run from your repository root):
@@ -20,6 +20,8 @@ Install it into your repository (run from your repository root):
 tar -xzf release-flow-bundle-<V>.tar.gz
 bash release-flow-bundle-<V>/install.sh --target .                       # add --with-cargo-adapter for Rust projects
 ```
+
+The recommended `--workflow-mode reusable` bundle installs thin callers pinned to its clean source commit. It also includes the existing local operations scripts, so your root Justfile needs only the import. The example configuration in this bundle carries the matching `pipeline` pin and `candidate / Candidate OK` job name. Configure your project, repository and adapter in that example. The default `--workflow-mode vendored` keeps the fully vendored/offline installation available; omit `pipeline` in that mode. Never edit managed deploy recipes.
 
 Then:
 
@@ -57,7 +59,7 @@ The installer copies these files into your repository:
 | `scripts/pipeline-pin.sh` | Pins release-flow scripts to this workflow's commit (`job.workflow_sha`) and rejects an unpinned or mismatched call |
 | `scripts/adapters/cargo.sh` | Cargo reference adapter (only with `--with-cargo-adapter`) |
 
-The bundle also carries `docs/RULESETS.md` and `docs/rulesets/*.json` (repository rulesets to apply before the first promotion).
+The bundle also carries the complete shell example, Marketplace guide, caller templates, `docs/RULESETS.md` and `docs/rulesets/*.json` (repository rulesets to apply before the first promotion).
 
 The installer verifies every bundle file against `BUNDLE.json` first, plans every change before writing anything, and refuses to overwrite files it did not install or that you modified. It rejects symlinked destinations, symlinked parent directories, and non-regular lock files as conflicts. It never edits your justfile or `.release-flow.json` and never runs Git write commands. Exit codes: `0` ok, `1` conflict/drift/checksum mismatch, `2` usage error or the target is not a Git work-tree root.
 
@@ -74,13 +76,13 @@ bash release-flow-bundle-<V>/install.sh --target . --check      # read-only: com
 
 Without the bundle, copy the files in the table above from this repository, plus `.release-flow.json` and an adapter script implementing the Adapter Protocol v1 (§3). You then have to track upgrades yourself.
 
-### Reusable workflows at a pinned SHA (no vendored scripts)
+### Reusable workflows at a pinned SHA
 
-Use this when another repository should run release-flow's candidate and publish pipelines by calling this repository at a pinned commit, instead of copying the scripts. The versioned bundle remains the offline and frozen option: it installs the workflows and scripts into the adopter and does not depend on github.com reusable workflows.
+Use this when another repository should run release-flow's candidate and publish pipelines by calling this repository at a pinned commit, with centralized orchestration. Local scripts still come from the versioned bundle, preserving the one-import Just interface. Vendored mode remains available for frozen/offline use.
 
 The adopter commits:
 
-1. `.github/workflows/candidate.yml` and `.github/workflows/release.yml`, copied from the templates below with `__RELEASE_FLOW_SHA__` replaced by the full commit SHA. The file names and the job ids `candidate` and `release` are fixed: promotion's default workflow path, `release-retry` dispatching `release.yml`, and crates.io Trusted Publishing all depend on them. Do not set `concurrency` on the caller (it can deadlock with the called workflow's group). Pass `secrets: inherit`.
+1. `.github/workflows/candidate.yml` and `.github/workflows/release.yml`, copied from the templates below with `__RELEASE_FLOW_SHA__` replaced by the full commit SHA. The file names and the job ids `candidate` and `release` are fixed: promotion's default workflow path, `release-retry` dispatching `release.yml`, and crates.io Trusted Publishing all depend on them. Do not set `concurrency` on the caller (it can deadlock with the called workflow's group). Pass only explicitly named storage secrets to candidate and publisher secrets to release, when static credentials are needed. OIDC needs no inherited secrets.
 2. `.release-flow.json` with the same pin, plus the reusable job name:
 
 ```json
@@ -110,10 +112,11 @@ permissions:
 jobs:
   candidate:
     uses: nbari/release-flow/.github/workflows/candidate.yml@__RELEASE_FLOW_SHA__
+    with:
+      adapter: tools/adapter.sh
     permissions:
       contents: read
       id-token: write
-    secrets: inherit
 ```
 
 <!-- release-flow caller: docs/callers/release.yml -->
@@ -151,14 +154,13 @@ jobs:
       contents: write
       packages: write
       id-token: write
-    secrets: inherit
 ```
 
 The `uses:` ref must be the full commit SHA, not a branch or tag. `scripts/pipeline-pin.sh` enforces that at run time against `job.workflow_sha`, and promotion check PF13 requires the candidate run to have called exactly `<pipeline.repository>/.github/workflows/candidate.yml@<pipeline.sha>`. Bump the pin in one develop commit that changes both `uses:` lines and `pipeline.sha` together. A candidate commit still cannot touch `.github/*` or `.release-flow.json` (PF09).
 
 This path works on github.com only (`job.workflow_repository`, `job.workflow_sha` and `job.workflow_ref` are not available on GitHub Enterprise Server). A called job's `environment:` is an environment in the adopter's repo. crates.io Trusted Publishing still matches the caller file `release.yml` and the environment `publish-crates-io`.
 
-Local commands stay local. From a release-flow checkout at `pipeline.sha`, run `scripts/release-deploy.sh`, `scripts/release-promote.sh`, `scripts/release-status.sh` and `scripts/release-retry.sh` with `--project-dir` pointing at the adopter. Promotion stays a local command because pushes made with `GITHUB_TOKEN` do not start workflows.
+Local commands use the installed managed bundle: `just deploy`, `just release-promote`, `just release-status` and `just release-retry`. A separate checkout at `pipeline.sha` with `--project-dir` also remains supported. Promotion stays local because pushes made with `GITHUB_TOKEN` do not start workflows.
 
 Recovery: `release-retry` dispatches the caller's `release.yml` on `promotion.publisher_ref`. Newer publisher code means bumping the pin on develop and dispatching with `--ref develop`.
 
@@ -209,6 +211,7 @@ Promotion and publishing need the optional blocks below (see `docs/release-flow.
 
 Release automation communicates with your project through a single executable adapter specified in `.release-flow.json`.
 
+- For static Marketplace validation, add `# release-flow-adapter: 1` after the interpreter shebang. This declares the six-command v1 contract without executing project code. Shell syntax and interpreter availability are checked; candidate execution verifies actual behavior. Existing binary adapters can keep using workflows/local commands or provide a script wrapper for static Action validation.
 - The adapter is executed directly with its shebang (it can be written in Bash, Python, or any executable binary).
 - Working directory (`cwd`) is always the project root (either the repository checkout or an isolated worktree).
 - Exit codes:
@@ -255,55 +258,31 @@ Release automation communicates with your project through a single executable ad
 
 ---
 
-## 4. Minimal Custom Adapter Example (e.g., Python / Generic)
+## 4. Complete shell-only example
 
-Here is a simple adapter for a project whose version is maintained in a `VERSION` file:
+Copy the tested example into your consumer repository:
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-cmd="${1:-}"
-shift || true
-
-case "${cmd}" in
-  version)
-    head -n 1 VERSION | tr -d '\r\n '
-    ;;
-  set-version)
-    target="$1"
-    printf '%s\n' "${target}" > VERSION
-    echo "VERSION"
-    ;;
-  verify)
-    pytest
-    flake8
-    ;;
-  inventory)
-    ver="$1"
-    cat <<EOF
-{
-  "artifacts": [
-    { "name": "my-app-${ver}.tar.gz", "target": "any" }
-  ],
-  "build_info": { "tools": { "python": "$(python3 --version)" } }
-}
-EOF
-    ;;
-  package)
-    ver="$1"
-    outdir="$2"
-    mkdir -p "${outdir}"
-    tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 \
-      -czf "${outdir}/my-app-${ver}.tar.gz" app/
-    ;;
-  *)
-    exit 2
-    ;;
-esac
+```sh
+cp -R /path/to/release-flow/examples/shell/app .
+cp /path/to/release-flow/examples/shell/VERSION .
+mkdir -p tools
+cp /path/to/release-flow/examples/shell/tools/adapter.sh tools/adapter.sh
+chmod +x tools/adapter.sh
 ```
 
----
+The extracted bundle also contains these files under `examples/shell/`. The
+[adapter source](../examples/shell/tools/adapter.sh) implements all six commands,
+validates SemVer, refuses nonempty package directories and produces deterministic
+archives with GNU tar and `gzip -n`. It needs no Rust, Python or Node toolchain.
+Run `tools/adapter.sh verify` locally; `SOURCE_DATE_EPOCH=1234567890
+tools/adapter.sh package 0.1.0 /tmp/hello-package` packages the initial version.
+Set config `adapter` to `tools/adapter.sh` and `project` to your project name.
+
+Rust consumers may install `--with-cargo-adapter` and use
+`scripts/adapters/cargo.sh`. Its CI-specific rustfmt/Clippy, musl and package-tool
+setup belongs to the adapter; the shared workflows contain no Rust setup.
+Other adapters must install or check their own application prerequisites inside
+the appropriate commands. Use a committed toolchain/version lock where possible.
 
 ## 5. Candidate Lifecycle & Branch Namespaces
 
@@ -442,7 +421,7 @@ When `.release-flow.json` declares `pipeline`, PF13 also requires the candidate 
 
 ## 9. Publishing and recovery
 
-The tag push starts `release.yml`: one job per configured channel, no `needs:`, each in its own `publish-<channel>` environment. Secrets: `CARGO_REGISTRY_TOKEN` (crates-io), `OCI_USERNAME` / `OCI_PASSWORD` (oci; `ghcr.io` falls back to the job token).
+The tag push starts `release.yml`: a read-only selection job followed by one independent job per configured channel, each in its own `publish-<channel>` environment. Secrets: `CARGO_REGISTRY_TOKEN` (crates-io), `OCI_USERNAME` / `OCI_PASSWORD` (oci; `ghcr.io` falls back to the job token).
 
 **crates.io.** The publisher repackages the crate at the candidate commit with the cargo version recorded in the manifest (`build_info.tools.cargo`; `release.yml` installs exactly that toolchain) and publishes only byte-identical bytes. Both `cargo package` and `cargo publish` run with `--package <publishers.crates-io.package>` (default: `project`), so in a workspace with several crates set `package` to the crate this release publishes and `artifact` to its `.crate` file; one release publishes one crate. For an alternative registry set `index_url` to its sparse index URL: it is polled for completion and passed to cargo as `--index sparse+<index_url>/`. A publish refused as "already uploaded" (an earlier attempt whose response was lost) is settled by the index: the same checksum succeeds, a different one is a conflict.
 
@@ -469,4 +448,37 @@ just release-retry X.Y.Z oci --break-lock       # clear an expired publication l
   - Guarded atomic promotion with signed tags and reconciliation (`scripts/release-promote.sh`).
   - Independent, idempotent publishers (GitHub Releases, OCI, crates.io, docs, Helm) with a durable ledger, status and retry.
   - Repository rulesets (`docs/RULESETS.md`, `docs/rulesets/*.json`; applied by the owner).
-  - Failure-injection suite (`tests/pipeline/`, 11 suites).
+  - Failure-injection suite (`tests/pipeline/`, 13 suites).
+
+## 11. Marketplace validation, trust and troubleshooting
+
+Use the step-level Action example and complete interface in
+[MARKETPLACE.md](MARKETPLACE.md). The Action never runs an adapter or release;
+`candidate.yml` and `release.yml` remain the release engine.
+
+On github.com, `job.workflow_repository`, `job.workflow_ref` and
+`job.workflow_sha` identify the workflow defining the current job. The consumer's
+`github.sha` is checked out independently. Missing runtime context fails closed;
+GHES is unsupported for these centralized workflows. See GitHub's
+[contexts reference](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)
+and the actual run evidence in [VERIFICATION.md](VERIFICATION.md).
+
+No build job receives publisher secrets. Prefer environment-scoped OIDC and
+restrict cloud roles to the consumer repository, intended environment and pinned
+reusable workflow. If static storage keys are necessary, add only the named
+`RELEASE_FLOW_S3_ACCESS_KEY_ID` and `RELEASE_FLOW_S3_SECRET_ACCESS_KEY` mappings to
+the candidate/release caller. Publisher credentials belong in `publish-<channel>`
+environments or explicit release caller secret mappings. Do not use
+`secrets: inherit`. Environment secrets in a called job belong to the consumer.
+
+An unknown channel, an explicitly requested unconfigured publisher or an empty
+publisher selection fails before publisher environments are entered. Optional
+publishers can fail without changing the durable release identity; retry the
+failed channel. A skipped publisher is not recorded as a successful publication.
+
+For pin mismatches, update both caller SHAs, `pipeline.sha` and the local bundle
+in one reviewed integration commit. The installer still refuses modified managed
+files. Review its next-step output and commit configuration alongside workflow
+upgrades; it intentionally never rewrites project configuration. Build reusable
+bundles only from clean committed sources. A dirty bundle reports
+`source_tree_clean: false` and cannot generate reusable callers.

@@ -9,6 +9,25 @@ on:
   push:
     branches: ['release/**']
   workflow_call:
+    inputs:
+      adapter:
+        description: Adapter path relative to the consumer root; empty uses .release-flow.json
+        required: false
+        type: string
+        default: ''
+    outputs:
+      candidate-sha:
+        description: Exact consumer source SHA that was validated
+        value: ${{ github.sha }}
+      runtime-sha:
+        description: Release-flow workflow and runtime SHA
+        value: ${{ jobs.guard.outputs.pipeline_sha }}
+      manifest-sha256:
+        description: Verified candidate manifest digest
+        value: ${{ jobs.assemble.outputs.manifest_sha256 }}
+      artifact-name:
+        description: Candidate artifact retained by this run
+        value: ${{ jobs.assemble.outputs.artifact_name }}
     secrets:
       RELEASE_FLOW_S3_ACCESS_KEY_ID:
         required: false
@@ -47,14 +66,27 @@ jobs:
       pipeline_sha: ${{ steps.pipeline.outputs.pipeline_sha }}
     steps:
       - name: Checkout candidate source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Require immutable runtime identity before checkout
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "${RF_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ && "${RF_WORKFLOW_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo '::error::Missing immutable workflow identity; github.com is required'; exit 1; }
+          case "${RF_WORKFLOW_REF}" in
+            "${RF_WORKFLOW_REPOSITORY}/.github/workflows/candidate.yml@"*) ;;
+            *) echo '::error::Unexpected workflow identity'; exit 1 ;;
+          esac
+          test ! -e .release-flow-pipeline && test ! -L .release-flow-pipeline
+
       - name: Checkout release-flow pipeline (this workflow's own commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -75,13 +107,12 @@ jobs:
             | tee -a "${GITHUB_OUTPUT}"
           echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
 
-      - name: Project toolchain (adapter prerequisite)
-        run: rustup toolchain install stable --profile minimal
-
       - name: Verify identity and trailers
         id: identity
+        env:
+          REQUESTED_ADAPTER: ${{ inputs.adapter }}
         run: |
-          bash "${RF_PIPELINE}/scripts/candidate-guard.sh" --ref "${GITHUB_REF_NAME}" --commit "${GITHUB_SHA}" | tee -a "${GITHUB_OUTPUT}"
+          bash "${RF_PIPELINE}/scripts/candidate-guard.sh" --ref "${GITHUB_REF_NAME}" --commit "${GITHUB_SHA}" --adapter "${REQUESTED_ADAPTER}" | tee -a "${GITHUB_OUTPUT}"
 
       - name: Package matrix and storage
         id: matrix
@@ -103,29 +134,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout candidate source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-
-      - name: Install toolchain
-        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
 
       - name: Run adapter verify
         env:
           ADAPTER: ${{ needs.guard.outputs.adapter }}
         run: |
           "./${ADAPTER}" verify
-
-      - name: Release-pipeline self-tests
-        run: |
-          if [[ -f tests/pipeline/run.sh ]]; then
-            if [[ -f tests/pipeline/ci-install-just.sh ]]; then
-              bash tests/pipeline/ci-install-just.sh
-              export PATH="${RUNNER_TEMP}/just-bin:${PATH}"
-            fi
-            bash tests/pipeline/run.sh
-          fi
 
   package:
     name: Package (${{ matrix.target || 'all' }})
@@ -137,28 +155,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout candidate source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-
-      - name: Install toolchain
-        run: rustup toolchain install stable --profile minimal
-
-      - name: Install musl tools
-        if: contains(matrix.target, 'musl')
-        run: sudo apt-get update -y && sudo apt-get install -y musl-tools
-
-      # Linux legs that declare packager metadata also emit .deb and .rpm.
-      # Pinned so a later candidate packages the same way.
-      - name: Install DEB and RPM packagers
-        if: contains(matrix.target, 'linux')
-        run: |
-          if grep -Rqs '^\[package\.metadata\.deb\]' --include='Cargo.toml' . \
-            || grep -Rqs '^\[package\.metadata\.generate-rpm\]' --include='Cargo.toml' .; then
-            cargo install cargo-deb --version 3.8.0 --locked
-            cargo install cargo-generate-rpm --version 0.21.0 --locked
-          fi
 
       - name: Package this target
         env:
@@ -173,7 +173,7 @@ jobs:
           SOURCE_DATE_EPOCH="${epoch}" "./${ADAPTER}" package "${VERSION}" "${RUNNER_TEMP}/part"
 
       - name: Upload target part (internal; expires in one day)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: candidate-part-${{ github.sha }}-${{ matrix.target || 'all' }}
           path: ${{ runner.temp }}/part/
@@ -191,13 +191,26 @@ jobs:
       manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
     steps:
       - name: Checkout candidate source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Require immutable runtime identity before checkout
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "${RF_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ && "${RF_WORKFLOW_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo '::error::Missing immutable workflow identity; github.com is required'; exit 1; }
+          case "${RF_WORKFLOW_REF}" in
+            "${RF_WORKFLOW_REPOSITORY}/.github/workflows/candidate.yml@"*) ;;
+            *) echo '::error::Unexpected workflow identity'; exit 1 ;;
+          esac
+          test ! -e .release-flow-pipeline && test ! -L .release-flow-pipeline
+
       - name: Checkout release-flow pipeline (this workflow's own commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -218,11 +231,8 @@ jobs:
             | tee -a "${GITHUB_OUTPUT}"
           echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
 
-      - name: Install toolchain
-        run: rustup toolchain install stable --profile minimal
-
       - name: Download every target part
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: candidate-part-${{ github.sha }}-*
           merge-multiple: true
@@ -232,8 +242,11 @@ jobs:
         env:
           ADAPTER: ${{ needs.guard.outputs.adapter }}
           VERSION: ${{ needs.guard.outputs.version }}
+          PIPELINE_REPOSITORY: ${{ needs.guard.outputs.pipeline_repository }}
+          PIPELINE_SHA: ${{ needs.guard.outputs.pipeline_sha }}
         run: |
-          "./${ADAPTER}" inventory "${VERSION}" > "${RUNNER_TEMP}/inventory.json"
+          "./${ADAPTER}" inventory "${VERSION}" | jq --arg r "${PIPELINE_REPOSITORY}" --arg s "${PIPELINE_SHA}" \
+            '.build_info.release_flow = {repository:$r, sha:$s}' > "${RUNNER_TEMP}/inventory.json"
 
       - name: Generate artifact manifest
         id: manifest
@@ -275,7 +288,7 @@ jobs:
             --manifest-sha256 "${MANIFEST_SHA256}"
 
       - name: Upload candidate artifacts (not a public release)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ steps.manifest.outputs.artifact_name }}
           path: dist/
@@ -289,13 +302,26 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout candidate source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Require immutable runtime identity before checkout
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "${RF_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ && "${RF_WORKFLOW_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo '::error::Missing immutable workflow identity; github.com is required'; exit 1; }
+          case "${RF_WORKFLOW_REF}" in
+            "${RF_WORKFLOW_REPOSITORY}/.github/workflows/candidate.yml@"*) ;;
+            *) echo '::error::Unexpected workflow identity'; exit 1 ;;
+          esac
+          test ! -e .release-flow-pipeline && test ! -L .release-flow-pipeline
+
       - name: Checkout release-flow pipeline (this workflow's own commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -317,7 +343,7 @@ jobs:
           echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
 
       - name: Download candidate artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ${{ needs.assemble.outputs.artifact_name }}
           path: candidate
@@ -353,13 +379,26 @@ jobs:
       id-token: write
     steps:
       - name: Checkout candidate source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Require immutable runtime identity before checkout
+        env:
+          RF_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          RF_WORKFLOW_REF: ${{ job.workflow_ref }}
+          RF_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          [[ "${RF_WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ && "${RF_WORKFLOW_REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo '::error::Missing immutable workflow identity; github.com is required'; exit 1; }
+          case "${RF_WORKFLOW_REF}" in
+            "${RF_WORKFLOW_REPOSITORY}/.github/workflows/candidate.yml@"*) ;;
+            *) echo '::error::Unexpected workflow identity'; exit 1 ;;
+          esac
+          test ! -e .release-flow-pipeline && test ! -L .release-flow-pipeline
+
       - name: Checkout release-flow pipeline (this workflow's own commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -381,7 +420,7 @@ jobs:
           echo "RF_PIPELINE=${RUNNER_TEMP}/release-flow" >> "${GITHUB_ENV}"
 
       - name: Download candidate artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ${{ needs.assemble.outputs.artifact_name }}
           path: candidate

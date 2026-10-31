@@ -17,6 +17,34 @@ permissions:
 # A production promotion pushes the already-validated candidate commit to main
 # and develop; candidate.yml validated that exact SHA, so it is not re-verified.
 jobs:
+  action:
+    name: Marketplace Action runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate this project with the root Action
+        uses: ./
+        id: self
+      - name: Validate a shell consumer in its own directory
+        uses: ./
+        id: consumer
+        with:
+          operation: validate
+          project-directory: examples/shell
+          adapter: tools/adapter.sh
+      - name: Assert consumer identity and runtime outputs
+        env:
+          SELF: ${{ steps.self.outputs.project }}
+          CONSUMER: ${{ steps.consumer.outputs.validation-json }}
+          RUNTIME: ${{ steps.consumer.outputs.runtime-revision }}
+        run: |
+          test "${SELF}" = release-flow
+          test "${RUNTIME}" = "${GITHUB_SHA}"
+          printf '%s' "${CONSUMER}" | jq -e '.valid and .project == "hello" and .adapter_executed == false'
+
   verify:
     name: Rust and pipeline verification
     if: "${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: ') && contains(github.event.head_commit.message, 'Release-Mode: production')) }}"
@@ -24,7 +52,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
@@ -61,14 +89,15 @@ jobs:
   ci-ok:
     name: CI OK
     if: "${{ always() && !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: ') && contains(github.event.head_commit.message, 'Release-Mode: production')) }}"
-    needs: verify
+    needs: [verify, action]
     runs-on: ubuntu-latest
     steps:
       - name: Require all verification jobs to succeed
         env:
           RESULT: ${{ needs.verify.result }}
+          ACTION_RESULT: ${{ needs.action.result }}
         run: |
-          if [[ "${RESULT}" != success ]]; then
+          if [[ "${RESULT}" != success || "${ACTION_RESULT}" != success ]]; then
             echo "::error::Rust/pipeline verification is ${RESULT}"
             exit 1
           fi

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Guard candidate branch and commit identity in CI.
 set -euo pipefail
+# shellcheck source=scripts/lib/common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+# shellcheck source=scripts/lib/schema.sh
+source "${RF_SCRIPTS}/lib/schema.sh"
+# shellcheck source=scripts/lib/project.sh
+source "${RF_SCRIPTS}/lib/project.sh"
 
 usage() {
   cat <<'EOF' >&2
@@ -11,11 +17,13 @@ EOF
 
 ref=""
 commit=""
+requested_adapter=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --ref) ref="$2"; shift 2 ;;
-    --commit) commit="$2"; shift 2 ;;
+    --ref) [[ $# -ge 2 ]] || usage; ref="$2"; shift 2 ;;
+    --commit) [[ $# -ge 2 ]] || usage; commit="$2"; shift 2 ;;
+    --adapter) [[ $# -ge 2 ]] || usage; requested_adapter="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -54,6 +62,7 @@ if [[ "${actual_head}" != "${commit}" ]]; then
 fi
 
 # 3. Read configuration from current commit
+rf_project_config "$(pwd -P)" "${requested_adapter}"
 if [[ ! -f .release-flow.json ]]; then
   echo "Missing .release-flow.json in candidate commit" >&2
   exit 1
@@ -172,7 +181,7 @@ if git rev-parse --verify "refs/tags/${branch_version}" >/dev/null 2>&1 || \
 fi
 
 if remote_tags="$(git ls-remote --tags --refs "${config_remote}" 2>/dev/null)"; then
-  if printf '%s\n' "${remote_tags}" | awk '{print $2}' | grep -qE "refs/tags/(v)?${branch_version}$"; then
+  if printf '%s\n' "${remote_tags}" | awk '{print $2}' | grep -qxF -e "refs/tags/${branch_version}" -e "refs/tags/v${branch_version}"; then
     echo "Conflicting remote release tag already exists on '${config_remote}' for version ${branch_version}" >&2
     exit 1
   fi

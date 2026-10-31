@@ -151,9 +151,9 @@ cfg="${TF_TMP}/cfg-empty-ok"
 dest="${TF_TMP}/dest-empty-ok"
 write_cfg "${cfg}"
 run_pin "${pipe}" "${dest}" "${cfg}" "" "" "" "acme/app" "${sha}"
-assert_rc 0 "RW1 empty context: exit 0"
-assert_contains "${T_OUT}" "pipeline_mode=local" "RW1 empty context: local"
-assert_eq "${sha}" "$(git -C "${dest}" rev-parse HEAD)" "RW1 empty context: dest HEAD"
+assert_rc 3 "RW1 empty context: rejected without mutable fallback"
+assert_contains "${T_ERR}" "no fallback" "RW1 empty context: explains"
+assert_eq absent "$([[ -e "${dest}" ]] && echo present || echo absent)" "RW1 empty context: dest absent"
 
 pipe="$(new_pipe empty-decl)"
 sha="$(git -C "${pipe}" rev-parse HEAD)"
@@ -203,6 +203,7 @@ job_pin_count() {
         count=$((count + 1))
         if [[ "${body}" != *'ref: ${{ job.workflow_sha }}'* \
               || "${body}" != *'repository: ${{ job.workflow_repository }}'* \
+              || "${body}" != *'Require immutable runtime identity before checkout'* \
               || "${body}" != *pipeline-pin.sh* ]]; then
           printf 'incomplete:%s\n' "${job}"
           return 0
@@ -220,6 +221,7 @@ job_pin_count() {
     count=$((count + 1))
     if [[ "${body}" != *'ref: ${{ job.workflow_sha }}'* \
           || "${body}" != *'repository: ${{ job.workflow_repository }}'* \
+          || "${body}" != *'Require immutable runtime identity before checkout'* \
           || "${body}" != *pipeline-pin.sh* ]]; then
       printf 'incomplete:%s\n' "${job}"
       return 0
@@ -256,7 +258,7 @@ done
 assert_eq "" "$(grep -n '^  workflow_dispatch:$' "${ROOT}/.github/workflows/candidate.yml" || true)" "RW2 candidate: no dispatch"
 assert_eq "1" "$(grep -c '^  workflow_dispatch:$' "${ROOT}/.github/workflows/release.yml")" "RW2 release: keeps dispatch"
 assert_eq "4" "$(job_pin_count "${ROOT}/.github/workflows/candidate.yml")" "RW2 candidate: four pinned jobs"
-assert_eq "5" "$(job_pin_count "${ROOT}/.github/workflows/release.yml")" "RW2 release: five pinned jobs"
+assert_eq "6" "$(job_pin_count "${ROOT}/.github/workflows/release.yml")" "RW2 release: plan and five pinned jobs"
 assert_eq "" "$(grep -nE 'ADAPTER|upload-artifact|download-artifact|cargo build|candidate-manifest' "${ROOT}/.github/workflows/release.yml" || true)" "RW2 release: no build or artifact steps"
 inputs="$(awk '
   /^  workflow_call:$/ { call=1; next }
@@ -274,9 +276,9 @@ assert_eq '  VERSION: ${{ inputs.version || github.ref_name }}' \
 assert_eq "" "$(grep -n "github.event_name == 'push'" "${release}" || true)" \
   "RW2 release: caller push is not a run-all-channels gate"
 for channel in github-release oci crates-io docs helm; do
-  assert_eq "    if: inputs.channel == '' || inputs.channel == '${channel}'" \
-    "$(grep -Fx "    if: inputs.channel == '' || inputs.channel == '${channel}'" "${release}")" \
-    "RW2 release: ${channel} runs when channel is empty or ${channel}"
+  assert_eq "    if: needs.plan.outputs.${channel} == 'true'" \
+    "$(grep -Fx "    if: needs.plan.outputs.${channel} == 'true'" "${release}")" \
+    "RW2 release: ${channel} runs only when selected and configured"
   assert_eq "      group: publish-${channel}-\${{ inputs.version || github.ref_name }}" \
     "$(grep -Fx "      group: publish-${channel}-\${{ inputs.version || github.ref_name }}" "${release}")" \
     "RW2 release: ${channel} concurrency uses the resolved version"
@@ -292,6 +294,36 @@ for wf in candidate release; do
   done < <(grep -oE 'secrets\.[A-Z][A-Z0-9_]*' "${file}" | sed 's/^secrets\.//' | sort -u)
   assert_eq "" "${missing}" "RW2 ${wf}: every secret is declared on workflow_call"
 done
+
+# ---------------------------------------------------------------------------
+
+t_case "RW4: Bootstrap rejects missing identity before loading runtime code"
+mkdir -p "${TF_TMP}/bootstrap"
+cd "${TF_TMP}/bootstrap"
+for wf in candidate release; do
+  bootstrap="${TF_TMP}/bootstrap-${wf}.sh"
+  awk '
+    /- name: Require immutable runtime identity before checkout/ { found=1 }
+    found && /^        run: \|$/ { body=1; next }
+    body && /^          / { print substr($0, 11); next }
+    body { exit }
+  ' "${ROOT}/.github/workflows/${wf}.yml" > "${bootstrap}"
+  assert_contains "$(cat "${bootstrap}")" 'Missing immutable workflow identity' "RW4 ${wf}: real bootstrap extracted"
+  ref="nbari/release-flow/.github/workflows/${wf}.yml@${sha}"
+  t_run env RF_WORKFLOW_REPOSITORY=nbari/release-flow RF_WORKFLOW_REF="${ref}" RF_WORKFLOW_SHA="${sha}" bash -euo pipefail "${bootstrap}"
+  assert_rc 0 "RW4 ${wf}: full identity accepted"
+  t_run env RF_WORKFLOW_REPOSITORY= RF_WORKFLOW_REF= RF_WORKFLOW_SHA= bash -euo pipefail "${bootstrap}"
+  assert_rc nonzero "RW4 ${wf}: empty contexts rejected before checkout"
+  t_run env RF_WORKFLOW_REPOSITORY=nbari/release-flow RF_WORKFLOW_REF="${ref}" RF_WORKFLOW_SHA=main bash -euo pipefail "${bootstrap}"
+  assert_rc nonzero "RW4 ${wf}: mutable revision rejected before checkout"
+  t_run env RF_WORKFLOW_REPOSITORY=other/repo RF_WORKFLOW_REF="${ref}" RF_WORKFLOW_SHA="${sha}" bash -euo pipefail "${bootstrap}"
+  assert_rc nonzero "RW4 ${wf}: repository confusion rejected before checkout"
+  ln -s "${TF_TMP}" .release-flow-pipeline
+  t_run env RF_WORKFLOW_REPOSITORY=nbari/release-flow RF_WORKFLOW_REF="${ref}" RF_WORKFLOW_SHA="${sha}" bash -euo pipefail "${bootstrap}"
+  assert_rc nonzero "RW4 ${wf}: preexisting runtime symlink rejected"
+  rm .release-flow-pipeline
+done
+cd "${orig_dir}"
 
 # ---------------------------------------------------------------------------
 
@@ -338,7 +370,7 @@ for base in candidate release; do
   assert_eq "1" "$(grep -c "^    uses: nbari/release-flow/.github/workflows/${base}.yml@__RELEASE_FLOW_SHA__$" "${caller}")" "RW3 ${base}: pinned uses"
   assert_eq "1" "$(grep -c 'uses:' "${caller}")" "RW3 ${base}: one uses"
   assert_eq "1" "$(grep -c "^  ${base}:$" "${caller}")" "RW3 ${base}: job id"
-  assert_eq "1" "$(grep -c '^    secrets: inherit$' "${caller}")" "RW3 ${base}: secrets inherit"
+  assert_eq "" "$(grep -n 'secrets: inherit' "${caller}" || true)" "RW3 ${base}: explicit secrets only"
   assert_eq "" "$(grep -n 'concurrency:' "${caller}" || true)" "RW3 ${base}: no concurrency"
 done
 assert_eq "1" "$(grep -c "^    branches: \\['release/\\*\\*'\\]$" "${ROOT}/docs/callers/candidate.yml")" "RW3 candidate: release/** push"

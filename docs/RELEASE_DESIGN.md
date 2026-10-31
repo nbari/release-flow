@@ -67,7 +67,7 @@ When `.release-flow.json` declares `pipeline`, PF13 also requires the candidate 
 
 **Storage** (`scripts/storage/`, `file:///` or `s3://` with conditional writes) is content-addressed and create-only: `blobs/sha256/..` (artifacts, `manifest.json`, `SHA256SUMS`), `candidates/<P>/<C>/<run>-<attempt>.json` (written only by the `candidate.yml` `retain` job), `releases/<P>/<V>.json` (the release binding), the append-only `ledger/` of publication events, `locks/` and `latest` pointers updated by compare-and-swap. Every record has an exact JSON schema (`scripts/lib/schema.sh`); nothing is ever sourced as shell. Identical rewrites succeed, different ones conflict.
 
-**Publishers** (`.github/workflows/release.yml`, one job per channel, no `needs:`) each run `scripts/publication/publish.sh`: resolve the signed tag (strict trailers, trusted signature, `C` contained in `main`), materialize and verify the stored bytes against the pinned manifest digest, take the channel lock, record `running`, observe the destination, apply only what is missing, observe again, record `succeeded` or `failed` with an error class. Channels: GitHub Release (draft → exact asset inventory → publish, never clobber), OCI (push by digest, immutable version tags, forward-only `latest` through a stored pointer and repair), crates.io (repackage at `C`, publish only byte-identical bytes, confirm the index checksum), docs and Helm (create-only objects, CAS-updated pointer/index that only grows).
+**Publishers** (`.github/workflows/release.yml`, a read-only publisher-selection job and one independent job per configured channel) each run `scripts/publication/publish.sh`: resolve the signed tag (strict trailers, trusted signature, `C` contained in `main`), materialize and verify the stored bytes against the pinned manifest digest, take the channel lock, record `running`, observe the destination, apply only what is missing, observe again, record `succeeded` or `failed` with an error class. Channels: GitHub Release (draft → exact asset inventory → publish, never clobber), OCI (push by digest, immutable version tags, forward-only `latest` through a stored pointer and repair), crates.io (repackage at `C`, publish only byte-identical bytes, confirm the index checksum), docs and Helm (create-only objects, CAS-updated pointer/index that only grows).
 
 **Release states** (`just release-status X.Y.Z [--json]`):
 
@@ -84,3 +84,39 @@ PREPARED ─► VALIDATING ─► VALIDATED ────────────
 Optional channel failures never demote `PROMOTED`. **Recovery** is `just release-retry X.Y.Z <channel>`: it dispatches `release.yml` with current approved publisher code (default ref `promotion.publisher_ref`), or runs it from the current checkout with `--local`; the identity still comes only from the original signed tag and the bytes only from storage.
 
 The nine required failure tests above map to PR03, PR06, PR14, PB03, PB08, PR15/PR16, PR09/PB05, PB09 and PR10/PB06 in `tests/pipeline/`.
+
+## Public interfaces and runtime identity
+
+The root composite `action.yml` performs static, read-only validation using the
+same strict config schema and project-path checks as the candidate guard. It
+never runs the consumer adapter. A protocol declaration is data, not proof of
+adapter behavior; candidate tests and inventory/package verification provide that
+proof. A consumer path cannot escape `GITHUB_WORKSPACE`, including via symlinks.
+Trusted Action code comes only from `GITHUB_ACTION_PATH`.
+
+`candidate.yml` and `release.yml` expose `workflow_call`. Their runtime checkout
+uses `job.workflow_repository` and `job.workflow_sha`, then `pipeline-pin.sh`
+requires checkout HEAD to equal the workflow SHA and a cross-repository call to
+use a full-SHA reference matching the consumer's `pipeline` configuration. Missing
+context fails without fallback. `github.sha` independently selects the consumer
+candidate checkout. Manifest `build_info.release_flow` records the runtime
+repository/SHA; promotion also checks GitHub's `referenced_workflows` evidence.
+These workflow identity fields currently require github.com.
+
+The read-only publisher plan validates version/configuration/selection before any
+publisher environment is entered. Each channel depends only on that plan, never
+on a sibling publisher. A final report requires exactly the selected jobs to
+succeed, with other jobs skipped. Unknown or explicitly unconfigured selections
+fail closed. Publication status still derives required success from the durable
+per-channel ledger, never from skipped GitHub jobs.
+
+The bundle supports thin pinned callers (`--workflow-mode reusable`) and the
+existing vendored workflows. Both retain the same local Just module and complete
+operations scripts. Reusable bundle generation requires clean committed runtime
+sources and records version, source SHA, workflow mode and file checksums. The
+installer plans conflicts before writes and does not overwrite consumer config.
+Upgrades change managed files and the consumer pin together in a reviewed commit.
+
+See [MARKETPLACE.md](MARKETPLACE.md) for owner-only listing activation, immutable
+version policy and exact metadata requirements; [VERIFICATION.md](VERIFICATION.md)
+records local and actual GitHub execution evidence.
