@@ -1,4 +1,7 @@
-use crate::{release::version::{self, Bump}, repository::Snapshot};
+use crate::{
+    release::version::{self, Bump},
+    repository::Snapshot,
+};
 use anyhow::Result;
 use serde_json::json;
 
@@ -7,12 +10,19 @@ pub fn run(bump: Bump, as_json: bool) -> Result<()> {
     let proposed = version::next(&snapshot.version, bump)?;
     let mut blockers = Vec::new();
     if snapshot.branch != "develop" {
-        blockers.push(format!("expected develop, currently on {}", snapshot.branch));
+        blockers.push(format!(
+            "expected develop, currently on {}",
+            snapshot.branch
+        ));
     }
     if !snapshot.clean {
         blockers.push("working tree is dirty".to_owned());
     }
-    if snapshot.latest_tag.as_ref().is_some_and(|tag| proposed <= *tag) {
+    if snapshot
+        .latest_tag
+        .as_ref()
+        .is_some_and(|tag| proposed <= *tag)
+    {
         blockers.push("proposed version is not newer than the latest local tag".to_owned());
     }
     if as_json {

@@ -1,7 +1,11 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use semver::Version;
 use serde_json::Value;
-use std::{fs, path::{Path, PathBuf}, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 /// Read-only snapshot of the current checkout and, when available, GitHub Actions.
 #[derive(Debug)]
@@ -66,17 +70,20 @@ fn command(program: &str, args: &[&str], cwd: Option<&Path>) -> Result<String> {
 
 /// A Rust workspace may declare its version at either package or workspace level.
 pub fn read_version(path: &Path) -> Result<Version> {
-    let manifest = fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
-    let value: toml::Value = toml::from_str(&manifest)
-        .with_context(|| format!("parse {}", path.display()))?;
-    let version = value.get("package")
+    let manifest = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let value: toml::Value =
+        toml::from_str(&manifest).with_context(|| format!("parse {}", path.display()))?;
+    let version = value
+        .get("package")
         .and_then(|package| package.get("version"))
         .and_then(toml::Value::as_str)
-        .or_else(|| value.get("workspace")
-            .and_then(|workspace| workspace.get("package"))
-            .and_then(|package| package.get("version"))
-            .and_then(toml::Value::as_str))
+        .or_else(|| {
+            value
+                .get("workspace")
+                .and_then(|workspace| workspace.get("package"))
+                .and_then(|package| package.get("version"))
+                .and_then(toml::Value::as_str)
+        })
         .ok_or_else(|| anyhow!("missing package.version or workspace.package.version"))?;
     Version::parse(version).with_context(|| format!("parse version {version}"))
 }
@@ -86,7 +93,11 @@ fn query_actions(root: &Path) -> (Option<Value>, Option<String>) {
         .current_dir(root)
         .env("GH_PROMPT_DISABLED", "1")
         .args([
-            "run", "list", "--limit", "5", "--json",
+            "run",
+            "list",
+            "--limit",
+            "5",
+            "--json",
             "name,headBranch,headSha,status,conclusion,url",
         ])
         .output();
@@ -94,11 +105,17 @@ fn query_actions(root: &Path) -> (Option<Value>, Option<String>) {
         Err(error) => (None, Some(format!("GitHub CLI unavailable: {error}"))),
         Ok(output) if !output.status.success() => (
             None,
-            Some(format!("GitHub Actions unavailable: {}", String::from_utf8_lossy(&output.stderr).trim())),
+            Some(format!(
+                "GitHub Actions unavailable: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
         ),
         Ok(output) => match serde_json::from_slice(&output.stdout) {
             Ok(value) => (Some(value), None),
-            Err(error) => (None, Some(format!("invalid GitHub Actions response: {error}"))),
+            Err(error) => (
+                None,
+                Some(format!("invalid GitHub Actions response: {error}")),
+            ),
         },
     }
 }

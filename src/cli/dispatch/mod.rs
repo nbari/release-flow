@@ -30,7 +30,10 @@ pub fn handler(matches: &ArgMatches) -> Result<Action> {
 #[cfg(test)]
 mod tests {
     use super::handler;
-    use crate::{cli::{actions::Action, commands}, release::version::Bump};
+    use crate::{
+        cli::{actions::Action, commands},
+        release::version::Bump,
+    };
 
     #[test]
     fn maps_plan_to_typed_action() {

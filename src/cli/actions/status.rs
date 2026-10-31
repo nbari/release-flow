@@ -21,9 +21,17 @@ pub fn run(as_json: bool) -> Result<()> {
     println!("Repository     {}", snapshot.root.display());
     println!("Branch         {}", snapshot.branch);
     println!("Commit         {}", snapshot.commit);
-    println!("Working tree   {}", if snapshot.clean { "clean" } else { "dirty" });
+    println!(
+        "Working tree   {}",
+        if snapshot.clean { "clean" } else { "dirty" }
+    );
     println!("Cargo version  {}", snapshot.version);
-    println!("Latest tag     {} (local)", snapshot.latest_tag.map_or_else(|| "none".into(), |v| v.to_string()));
+    println!(
+        "Latest tag     {} (local)",
+        snapshot
+            .latest_tag
+            .map_or_else(|| "none".into(), |v| v.to_string())
+    );
     println!("GitHub Actions");
     if let Some(Value::Array(runs)) = snapshot.actions {
         if runs.is_empty() {
@@ -37,7 +45,10 @@ pub fn run(as_json: bool) -> Result<()> {
             println!("  {name} / {branch}  {status} {conclusion}");
         }
     } else {
-        println!("  {}", snapshot.actions_error.as_deref().unwrap_or("unavailable"));
+        println!(
+            "  {}",
+            snapshot.actions_error.as_deref().unwrap_or("unavailable")
+        );
     }
     Ok(())
 }

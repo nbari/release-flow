@@ -25,7 +25,11 @@ pub fn next(current: &Version, bump: Bump) -> Result<Version> {
         bail!("planning a bump from a prerelease/build version is not yet supported");
     }
     let (major, minor, patch) = match bump {
-        Bump::Patch => (current.major, current.minor, checked_increment(current.patch)?),
+        Bump::Patch => (
+            current.major,
+            current.minor,
+            checked_increment(current.patch)?,
+        ),
         Bump::Minor => (current.major, checked_increment(current.minor)?, 0),
         Bump::Major => (checked_increment(current.major)?, 0, 0),
     };
@@ -33,7 +37,9 @@ pub fn next(current: &Version, bump: Bump) -> Result<Version> {
 }
 
 fn checked_increment(value: u64) -> Result<u64> {
-    value.checked_add(1).ok_or_else(|| anyhow::anyhow!("version component overflow"))
+    value
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("version component overflow"))
 }
 
 /// Ignore unrelated Git tags; only stable X.Y.Z tags are release identifiers.
@@ -53,9 +59,18 @@ mod tests {
     #[test]
     fn bumps_all_stable_components() {
         let current = Version::new(0, 1, 9);
-        assert_eq!(next(&current, Bump::Patch).expect("patch"), Version::new(0, 1, 10));
-        assert_eq!(next(&current, Bump::Minor).expect("minor"), Version::new(0, 2, 0));
-        assert_eq!(next(&current, Bump::Major).expect("major"), Version::new(1, 0, 0));
+        assert_eq!(
+            next(&current, Bump::Patch).expect("patch"),
+            Version::new(0, 1, 10)
+        );
+        assert_eq!(
+            next(&current, Bump::Minor).expect("minor"),
+            Version::new(0, 2, 0)
+        );
+        assert_eq!(
+            next(&current, Bump::Major).expect("major"),
+            Version::new(1, 0, 0)
+        );
     }
 
     #[test]

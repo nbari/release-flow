@@ -45,11 +45,19 @@ mod tests {
 
     #[test]
     fn accepts_patch_plan() {
-        assert!(new().try_get_matches_from(["release-flow", "plan", "patch"]).is_ok());
+        assert!(
+            new()
+                .try_get_matches_from(["release-flow", "plan", "patch"])
+                .is_ok()
+        );
     }
 
     #[test]
     fn rejects_unknown_bump() {
-        assert!(new().try_get_matches_from(["release-flow", "plan", "experimental"]).is_err());
+        assert!(
+            new()
+                .try_get_matches_from(["release-flow", "plan", "experimental"])
+                .is_err()
+        );
     }
 }
