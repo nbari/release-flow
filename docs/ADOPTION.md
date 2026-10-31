@@ -53,7 +53,7 @@ The installer copies these files into your repository:
 | `scripts/publication/ci-install-oras.sh` | Pinned, checksum-verified ORAS for the OCI publisher |
 | `scripts/publishers/{github-release,oci,crates-io,docs,helm}.sh` | Channel publishers (`observe` / `apply`) |
 | `.github/workflows/candidate.yml` | GitHub Actions candidate pipeline (the only artifact builder) |
-| `.github/workflows/publish.yml` | One independent publish job per channel (tag push or dispatch) |
+| `.github/workflows/release.yml` | One independent publish job per channel (tag push or dispatch) |
 | `scripts/adapters/cargo.sh` | Cargo reference adapter (only with `--with-cargo-adapter`) |
 
 The bundle also carries `docs/RULESETS.md` and `docs/rulesets/*.json` (repository rulesets to apply before the first promotion).
@@ -109,7 +109,7 @@ Promotion and publishing need the optional blocks below (see `docs/release-flow.
 | `promotion.candidate_workflow` | Workflow that validates candidates (default `.github/workflows/candidate.yml`). |
 | `promotion.required_job` | Job that must succeed on the candidate (default `Candidate OK`). |
 | `promotion.signature_verification` | `github` (GitHub must report the tag verified) or `allowed-signers` (SSH signatures checked against `promotion.allowed_signers`, a path under `.github/`). |
-| `promotion.publisher_ref` | Ref `release-retry` dispatches `publish.yml` on (default `main`). |
+| `promotion.publisher_ref` | Ref `release-retry` dispatches `release.yml` on (default `main`). |
 | `storage.uri` | `file:///abs/path` or `s3://bucket/prefix` (`RELEASE_FLOW_STORAGE_URI` overrides); `storage.region`, `storage.endpoint` for S3-compatible stores. |
 | `publishers.<channel>` | `github-release` (`assets` globs), `oci` (`artifact`, `repository`, `tags`, `latest_tag`), `crates-io` (`artifact`, `package`, `index_url`; see §9), `docs` (`artifact`, `uri`, `latest`), `helm` (`artifact`, `uri`, `base_url`; the chart's `Chart.yaml` version must equal the release version); each has `required` (counts towards `PUBLISHED`). |
 
@@ -348,18 +348,18 @@ Exit codes: `0` promoted or already promoted, `3` precondition rejected (nothing
 
 ## 9. Publishing and recovery
 
-The tag push starts `publish.yml`: one job per configured channel, no `needs:`, each in its own `publish-<channel>` environment. Secrets: `CARGO_REGISTRY_TOKEN` (crates-io), `OCI_USERNAME` / `OCI_PASSWORD` (oci; `ghcr.io` falls back to the job token).
+The tag push starts `release.yml`: one job per configured channel, no `needs:`, each in its own `publish-<channel>` environment. Secrets: `CARGO_REGISTRY_TOKEN` (crates-io), `OCI_USERNAME` / `OCI_PASSWORD` (oci; `ghcr.io` falls back to the job token).
 
-**crates.io.** The publisher repackages the crate at the candidate commit with the cargo version recorded in the manifest (`build_info.tools.cargo`; `publish.yml` installs exactly that toolchain) and publishes only byte-identical bytes. Both `cargo package` and `cargo publish` run with `--package <publishers.crates-io.package>` (default: `project`), so in a workspace with several crates set `package` to the crate this release publishes and `artifact` to its `.crate` file; one release publishes one crate. For an alternative registry set `index_url` to its sparse index URL: it is polled for completion and passed to cargo as `--index sparse+<index_url>/`. A publish refused as "already uploaded" (an earlier attempt whose response was lost) is settled by the index: the same checksum succeeds, a different one is a conflict.
+**crates.io.** The publisher repackages the crate at the candidate commit with the cargo version recorded in the manifest (`build_info.tools.cargo`; `release.yml` installs exactly that toolchain) and publishes only byte-identical bytes. Both `cargo package` and `cargo publish` run with `--package <publishers.crates-io.package>` (default: `project`), so in a workspace with several crates set `package` to the crate this release publishes and `artifact` to its `.crate` file; one release publishes one crate. For an alternative registry set `index_url` to its sparse index URL: it is polled for completion and passed to cargo as `--index sparse+<index_url>/`. A publish refused as "already uploaded" (an earlier attempt whose response was lost) is settled by the index: the same checksum succeeds, a different one is a conflict.
 
 ```bash
 just release-status X.Y.Z [--json]              # PROMOTED, PUBLISHED or INCONSISTENT, plus each channel
-just release-retry X.Y.Z oci                    # dispatch publish.yml (promotion.publisher_ref, or --ref REF)
+just release-retry X.Y.Z oci                    # dispatch release.yml (promotion.publisher_ref, or --ref REF)
 just release-retry X.Y.Z oci --local            # run the publisher from this checkout
 just release-retry X.Y.Z oci --break-lock       # clear an expired publication lock first
 ```
 
-`workflow_dispatch` works only once `publish.yml` is on the default branch; before that, use `--local`. Retries never rebuild or retag: the identity comes from the signed tag, the bytes from storage.
+`workflow_dispatch` works only once `release.yml` is on the default branch; before that, use `--local`. Retries never rebuild or retag: the identity comes from the signed tag, the bytes from storage.
 
 ---
 

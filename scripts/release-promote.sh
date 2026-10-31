@@ -652,5 +652,5 @@ emit_result "${final_record}" "${r_tag}" PROMOTED false "${promoted_by_other}" "
   echo "  tag:       ${version} -> ${commit:0:12} (tag object ${r_tag:0:12})"
   echo "  branches:  ${main_branch} ${main_before:0:12} -> ${commit:0:12}, ${prod_base} ${develop_before:0:12} -> ${commit:0:12}"
   echo "  manifest:  ${manifest_sha}"
-  echo "  The tag push starts publish.yml; follow it with: just release-status ${version}"
+  echo "  The tag push starts release.yml; follow it with: just release-status ${version}"
 } >&2

@@ -44,7 +44,7 @@ reports `Build OK`, so the two required contexts are unambiguous.
 | Owner | `sandbox`, `just deploy` (creates `release/**`) | write access |
 | Release operator | `just release-promote` | the repository's **only** write deploy key, configured as `promotion.push_remote`, plus a signing key registered on the tagger's GitHub account (`github` mode) or listed in the committed allowed signers file (`allowed-signers` mode). gh token: read actions and rules; `actions:write` to dispatch retries. Storage: read only. |
 | `candidate.yml` `retain` job | write `blobs/` and `candidates/` | `candidate-storage` environment; OIDC role limited to PutObject with `s3:if-none-match` enforced by the bucket policy, plus GetObject/ListBucket on the same prefixes (an existing blob or record is read back and compared instead of overwritten) |
-| `publish.yml` jobs | one channel each | `publish-<channel>` environments (deployment refs: `main`, `develop`, tags `*.*.*`); storage role: Get/List everywhere (GetObject verifies existing create-only records and authorizes conditional lock deletes), Put on `releases/`, `ledger/`, `locks/`, `pointers/`, Delete only on `locks/` (always `If-Match` on the lock's ETag, after checking it names the releasing attempt) |
+| `release.yml` jobs | one channel each | `publish-<channel>` environments (deployment refs: `main`, `develop`, tags `*.*.*`); storage role: Get/List everywhere (GetObject verifies existing create-only records and authorizes conditional lock deletes), Put on `releases/`, `ledger/`, `locks/`, `pointers/`, Delete only on `locks/` (always `If-Match` on the lock's ETag, after checking it names the releasing attempt) |
 
 The `DeployKey` bypass applies to every write deploy key of the repository:
 keep exactly one.
@@ -66,11 +66,11 @@ other crates; publish each further crate from its own release-flow project.
 
 ## Bootstrap notes
 
-- `workflow_dispatch` only works once `publish.yml` is on the default branch
+- `workflow_dispatch` only works once `release.yml` is on the default branch
   (`main`). Until the first promotion carries it there, recover with
   `just release-retry X.Y.Z <channel> --local`.
 - Tag-push workflows run the publisher code frozen at the tag. Recovery
   dispatches newer approved code (`--ref`, default `promotion.publisher_ref`)
   against the same signed tag and the same stored bytes.
 - Pushes made with `GITHUB_TOKEN` do not start workflows; promotion therefore
-  runs locally with the deploy key, so its tag push starts `publish.yml`.
+  runs locally with the deploy key, so its tag push starts `release.yml`.

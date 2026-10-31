@@ -4,7 +4,7 @@
 #
 #   release-retry.sh [--project-dir DIR] <version> <channel> [--local] [--ref REF] [--break-lock]
 #
-#   (default)     dispatch publish.yml on --ref (default promotion.publisher_ref,
+#   (default)     dispatch release.yml on --ref (default promotion.publisher_ref,
 #                 else main) for this version and channel
 #   --local       run scripts/publication/publish.sh from this checkout instead
 #   --break-lock  first break the channel's publication lock, only if it expired
@@ -94,18 +94,18 @@ if [[ "${local_run}" == "true" ]]; then
   exit "${rc}"
 fi
 
-[[ -n "${repository}" ]] || rf_die ".release-flow.json lacks \"repository\" (needed to dispatch publish.yml)" 1
+[[ -n "${repository}" ]] || rf_die ".release-flow.json lacks \"repository\" (needed to dispatch release.yml)" 1
 command -v gh >/dev/null 2>&1 || rf_die "Missing required tool: gh (or use --local)" 1
 if [[ -z "${ref}" ]]; then
   ref="$(rf_cfg .promotion.publisher_ref)"
   [[ -n "${ref}" ]] || ref="main"
 fi
-if ! gh workflow run publish.yml --repo "${repository}" --ref "${ref}" -f "version=${version}" -f "channel=${channel}" >&2; then
-  rf_die "Cannot dispatch publish.yml on ${ref}. publish.yml must exist on the default branch; until then use --local." 1
+if ! gh workflow run release.yml --repo "${repository}" --ref "${ref}" -f "version=${version}" -f "channel=${channel}" >&2; then
+  rf_die "Cannot dispatch release.yml on ${ref}. release.yml must exist on the default branch; until then use --local." 1
 fi
 rf_kv version "${version}"
 rf_kv channel "${channel}"
 rf_kv mode dispatched
 rf_kv state dispatched
-rf_kv run_url "https://github.com/${repository}/actions/workflows/publish.yml"
-echo "Dispatched publish.yml (${channel}) for ${version} on ${ref}; follow it with: just release-status ${version}" >&2
+rf_kv run_url "https://github.com/${repository}/actions/workflows/release.yml"
+echo "Dispatched release.yml (${channel}) for ${version} on ${ref}; follow it with: just release-status ${version}" >&2

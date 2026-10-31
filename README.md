@@ -61,7 +61,7 @@ flowchart TD
         AtomicPush --> Promoted["C is PROMOTED"]
     end
 
-    subgraph Pub["5. Independent, Idempotent Publishers (publish.yml)"]
+    subgraph Pub["5. Independent, Idempotent Publishers (release.yml)"]
         direction TB
         Promoted --> P_GH["GitHub Release<br/><i>draft ──► verify ──► publish</i>"]
         Promoted --> P_OCI["OCI Registry<br/><i>tag verified digest</i>"]
@@ -174,7 +174,7 @@ stateDiagram-v2
 
 The **artifact manifest is immutable**; the publisher status/attempt ledger is separately updateable. Each attempt records version, `C`, channel, workflow run, timestamps, observed digest/state, and an actionable error. Recovery reads actual remote state first; it must not assume that an interrupted job did nothing.
 
-`just release-retry X.Y.Z <channel>` reruns one publisher without rerunning promotion: by default it dispatches `publish.yml` with current approved publisher code (`--ref`, default `promotion.publisher_ref`), `--local` runs it from your checkout, and `--break-lock` clears an expired publication lock first. `just release-status X.Y.Z [--json]` derives the state above from the remote tag, the durable ledger and the GitHub evidence.
+`just release-retry X.Y.Z <channel>` reruns one publisher without rerunning promotion: by default it dispatches `release.yml` with current approved publisher code (`--ref`, default `promotion.publisher_ref`), `--local` runs it from your checkout, and `--break-lock` clears an expired publication lock first. `just release-status X.Y.Z [--json]` derives the state above from the remote tag, the durable ledger and the GitHub evidence.
 
 ### Required failure-injection scenarios
 
@@ -221,7 +221,7 @@ The [CI workflow](.github/workflows/ci.yml) runs formatting, Clippy, unit and in
 
 The [Candidate workflow](.github/workflows/candidate.yml) is triggered automatically on push to temporary `release/**` branches. It enforces exact candidate identity and trailers via `scripts/candidate-guard.sh`, runs the project tests, packages every adapter target in a matrix (`scripts/candidate-targets.sh`), assembles one immutable `manifest.json` with `SHA256SUMS`, downloads and verifies the artifacts in an isolated job, and, for production candidates, retains the verified bytes and a candidate record in durable storage (`scripts/storage/storage.sh retain-candidate`). It is the only place release artifacts are built.
 
-The [Publish workflow](.github/workflows/publish.yml) runs on the signed tag push with one job per channel (GitHub Release, OCI, crates.io, docs, Helm) and no `needs:` between them; each resolves the signed tag and the stored bytes on its own.
+The [Release workflow](.github/workflows/release.yml) runs on the signed tag push with one job per channel (GitHub Release, OCI, crates.io, docs, Helm) and no `needs:` between them; each resolves the signed tag and the stored bytes on its own.
 
 ### Promoting and publishing
 

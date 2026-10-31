@@ -152,7 +152,7 @@ assert_eq "$(cd "${TF_DIST}" && for f in *; do printf '%s %s\n' "${f}" "$(sha256
 t_run bash "${repo}/scripts/release-retry.sh" --project-dir "${repo}" 0.1.1 github-release
 assert_rc 0 "IN03: dispatched retry"
 assert_contains "${T_OUT}" "mode=dispatched" "IN03: reports a dispatch"
-assert_contains "$(cat "${MOCK_GH_ROOT}/calls.log")" "gh workflow run publish.yml --repo acme/in03 --ref main -f version=0.1.1 -f channel=github-release" "IN03: dispatches publish.yml on main for the same version"
+assert_contains "$(cat "${MOCK_GH_ROOT}/calls.log")" "gh workflow run release.yml --repo acme/in03 --ref main -f version=0.1.1 -f channel=github-release" "IN03: dispatches release.yml on main for the same version"
 t_run bash "${repo}/scripts/release-retry.sh" --project-dir "${repo}" 0.9.9 github-release
 assert_rc 4 "IN03: retry of an unpromoted version exits 4"
 t_run bash "${repo}/scripts/release-retry.sh" --project-dir "${repo}" 0.1.1 bogus
@@ -171,9 +171,9 @@ for recipe in deploy deploy-minor deploy-major release-promote release-status re
   assert_contains "${T_OUT}" "    ${recipe} " "IN04: installed justfile lists ${recipe}"
 done
 cd "${orig_dir}"
-assert_eq "absent" "$(exists "${ROOT}/.github/workflows/release.yml")" "IN04: release.yml is gone"
+assert_eq "present" "$(exists "${ROOT}/.github/workflows/release.yml")" "IN04: release.yml is present"
 assert_eq "absent" "$(exists "${ROOT}/.github/actions/release-is-latest")" "IN04: release-is-latest action is gone"
-assert_eq "" "$(grep -nE '^[[:space:]]+needs:' "${ROOT}/.github/workflows/publish.yml" || true)" "IN04: publish.yml has no needs"
+assert_eq "" "$(grep -nE '^[[:space:]]+needs:' "${ROOT}/.github/workflows/release.yml" || true)" "IN04: release.yml has no needs"
 assert_eq "" "$(grep -rlE 'release\.env|Candidate run:' "${ROOT}/.github" "${ROOT}/scripts" || true)" "IN04: no release.env or free-form tag parsing"
 assert_eq "" "$(grep -rnE '^[[:space:]]*(source|\.)[[:space:]]' "${ROOT}/scripts" "${ROOT}/.github/workflows" \
   | grep -vE ':[0-9]+:[[:space:]]*\.[[:space:]]+as[[:space:]]' \

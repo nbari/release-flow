@@ -1,4 +1,4 @@
-name: Publish
+name: Release
 
 # One job per channel and no `needs:` anywhere: every publisher resolves and
 # verifies the signed tag and the stored bytes on its own, so a failing channel

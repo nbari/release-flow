@@ -19,7 +19,7 @@ mkdir -p "${MOCK_GH_ROOT}" "${MOCK_REGISTRY}" "${MOCK_CARGO_INDEX}"
 tf_payload_paths() {
   (
     cd "${ROOT}"
-    printf '%s\n' .justfiles/deploy.just .github/workflows/candidate.yml .github/workflows/publish.yml
+    printf '%s\n' .justfiles/deploy.just .github/workflows/candidate.yml .github/workflows/release.yml
     find scripts -name '*.sh' ! -path 'scripts/adapters/*' \
       ! -name release-flow-bundle.sh ! -name release-flow-install.sh | LC_ALL=C sort
   )

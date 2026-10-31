@@ -43,7 +43,7 @@ PAYLOAD=(
   scripts/publishers/helm.sh
   scripts/publishers/oci.sh
   .github/workflows/candidate.yml
-  .github/workflows/publish.yml
+  .github/workflows/release.yml
 )
 # Files installed only on request (install.sh --with-cargo-adapter).
 OPTIONAL=(

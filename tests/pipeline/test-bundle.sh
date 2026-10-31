@@ -43,7 +43,7 @@ refs_of() {
 }
 
 PAYLOAD_PATHS=".github/workflows/candidate.yml
-.github/workflows/publish.yml
+.github/workflows/release.yml
 .justfiles/deploy.just
 scripts/candidate-guard.sh
 scripts/candidate-manifest.sh
