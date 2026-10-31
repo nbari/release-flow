@@ -84,18 +84,21 @@ case "${uri}" in
     # shellcheck source=scripts/storage/backends/s3.sh
     source "${RF_SCRIPTS}/storage/backends/s3.sh"
     ;;
+  github://*)
+    # shellcheck source=scripts/storage/backends/github.sh
+    source "${RF_SCRIPTS}/storage/backends/github.sh"
+    ;;
   *)
-    rf_die "storage: unsupported URI scheme: ${uri} (expected file:///abs or s3://bucket/prefix)" 2
+    rf_die "storage: unsupported URI scheme: ${uri} (expected file:///abs, github://owner/repo or s3://bucket/prefix)" 2
     ;;
 esac
 
 rf_have_sha256 || rf_die "Missing required tool: sha256sum or shasum" 1
 rf_require_tools jq
 
-be_init "${uri}" || exit 1
-
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
+be_init "${uri}" || exit 1
 
 check_key() {
   if [[ ! "$1" =~ ${RF_RE_KEY} ]]; then
@@ -155,7 +158,7 @@ get_blob() {
       echo "storage: missing blob sha256:${sha}" >&2
       return 4
     fi
-    return 1
+    return "${rc}"
   fi
   actual="$(rf_sha256_file "${tmp}")"
   if [[ "${actual}" != "${sha}" ]]; then
@@ -189,7 +192,7 @@ put_blob() {
       fi
       (( rc == 0 )) || return 1
       ;;
-    *) return 1 ;;
+    *) return "${rc}" ;;
   esac
   printf '%s\n' "${sha}"
 }
@@ -276,12 +279,18 @@ retain_candidate() {
       manifest_sha256: $m, sha256sums_sha256: $s}' > "${rec}"
   rf_schema_check candidate-record "${rec}" || rf_die "retain-candidate: manifest identity does not form a valid candidate record" 6
 
+  # Backends may stage a set of blobs, but must seal it before the record
+  # becomes visible. Filesystem and S3 objects are already create-only.
+  if declare -F be_begin_batch >/dev/null; then be_begin_batch "${rec}" "${dir}"; fi
+
   while IFS= read -r name; do
     [[ -n "${name}" ]] || continue
     put_blob "${dir}/${name}" >/dev/null
   done <<< "$(jq -r '.artifacts[].name' "${manifest}")"
   put_blob "${manifest}" >/dev/null
   put_blob "${dir}/SHA256SUMS" >/dev/null
+
+  if declare -F be_commit_batch >/dev/null; then be_commit_batch; fi
 
   key="candidates/${project}/${commit}/${run_id}-${attempt}.json"
   put_record "${key}" "${rec}" candidate-record

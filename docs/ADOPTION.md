@@ -49,8 +49,8 @@ The installer copies these files into your repository:
 | `scripts/release-status.sh` | Read-only release and per-channel publication state |
 | `scripts/release-retry.sh` | Re-run one publication channel (dispatch or `--local`) |
 | `scripts/lib/{common,schema,project,github,tag}.sh` | Shared helpers, strict JSON schemas, GitHub evidence, signed tag format |
-| `scripts/storage/storage.sh`, `storage/backends/{fs,s3}.sh` | Content-addressed, create-only durable storage (`file:///`, `s3://`) |
-| `scripts/storage/ci-credentials.sh` | Storage credentials in Actions (OIDC role or static keys) |
+| `scripts/storage/storage.sh`, `storage/backends/{fs,s3,github}.sh` | Content-addressed, create-only durable storage (`github://`, `file:///`, `s3://`) |
+| `scripts/storage/ci-credentials.sh` | Storage credentials in Actions (GitHub token, or optional S3 credentials) |
 | `scripts/publication/{plan,publish,resolve,latest,ledger}.sh` | Publication driver, signed-tag resolver, latest decision, ledger and locks |
 | `scripts/publication/ci-install-oras.sh` | Pinned, checksum-verified ORAS for the OCI publisher |
 | `scripts/publishers/{github-release,oci,crates-io,docs,helm}.sh` | Channel publishers (`observe` / `apply`) |
@@ -115,7 +115,7 @@ jobs:
     with:
       adapter: tools/adapter.sh
     permissions:
-      contents: read
+      contents: write
       id-token: write
 ```
 
@@ -201,7 +201,7 @@ Promotion and publishing need the optional blocks below (see `docs/release-flow.
 | `promotion.required_job` | Job that must succeed on the candidate (default `Candidate OK`). |
 | `promotion.signature_verification` | `github` (GitHub must report the tag verified) or `allowed-signers` (SSH signatures checked against `promotion.allowed_signers`, a path under `.github/`). |
 | `promotion.publisher_ref` | Ref `release-retry` dispatches `release.yml` on (default `main`). |
-| `storage.uri` | `file:///abs/path` or `s3://bucket/prefix` (`RELEASE_FLOW_STORAGE_URI` overrides); `storage.region`, `storage.endpoint` for S3-compatible stores. |
+| `storage.uri` | `github://owner/repo`, `file:///abs/path` or `s3://bucket/prefix` (`RELEASE_FLOW_STORAGE_URI` overrides); `storage.region`, `storage.endpoint` for S3-compatible stores. |
 | `publishers.<channel>` | `github-release` (`assets` globs), `oci` (`artifact`, `repository`, `tags`, `latest_tag`), `crates-io` (`artifact`, `package`, `index_url`; see §9), `docs` (`artifact`, `uri`, `latest`), `helm` (`artifact`, `uri`, `base_url`; the chart's `Chart.yaml` version must equal the release version); each has `required` (counts towards `PUBLISHED`). |
 | `pipeline.repository` / `pipeline.sha` | Optional pin of the reusable workflows (`owner/name` and a full 40-hex commit). Absent means this repository's own, or bundle-installed, workflows. See the pinned-SHA subsection of §1. |
 
@@ -402,9 +402,12 @@ bash scripts/verify-candidate.sh \
 
 ## 7. Durable storage
 
-Provision a bucket (or a shared filesystem path for tests) and set `storage.uri`. Only production candidates that passed every job are retained, by the `retain` job; until storage is configured, candidates are not promotable (promotion check PF17).
+Use [GitHub-only storage](GITHUB_STORAGE.md) for release assets and records in your repository, or provision an S3 bucket (or a shared filesystem path for tests), and set `storage.uri`. Only production candidates that passed every job are retained, by the `retain` job; until storage is configured, candidates are not promotable (promotion check PF17).
 
 - **S3**: the aws CLI must support conditional writes (`--if-none-match`, `--if-match`) and conditional deletes (`delete-object --if-match`, used to release publication locks only while they still name the releasing attempt); providers that ignore them are unsupported. Enable versioning, Object Lock (governance) for the supported recovery period and no lifecycle expiry on `blobs/`.
+
+The following credential and IAM settings apply only to S3; GitHub storage uses `GITHUB_TOKEN` with `contents: write` in retention and publisher jobs.
+
 - **Credentials in Actions** (`scripts/storage/ci-credentials.sh`): repository variable `RELEASE_FLOW_AWS_ROLE_ARN` (GitHub OIDC, `id-token: write`; the OIDC token reaches `aws sts` through a private `0600` file, never the command line), or the secrets `RELEASE_FLOW_S3_ACCESS_KEY_ID` / `RELEASE_FLOW_S3_SECRET_ACCESS_KEY`.
 - **IAM permissions** (S3 actions; prefixes relative to the storage URI):
 
@@ -458,7 +461,7 @@ just release-retry X.Y.Z oci --break-lock       # clear an expired publication l
   - Guarded atomic promotion with signed tags and reconciliation (`scripts/release-promote.sh`).
   - Independent, idempotent publishers (GitHub Releases, OCI, crates.io, docs, Helm) with a durable ledger, status and retry.
   - Repository rulesets (`docs/RULESETS.md`, `docs/rulesets/*.json`; applied by the owner).
-  - Failure-injection suite (`tests/pipeline/`, 13 suites).
+  - Failure-injection suite (`tests/pipeline/`, 14 suites).
 
 ## 11. Marketplace validation, trust and troubleshooting
 

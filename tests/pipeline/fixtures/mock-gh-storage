@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# Local Git database + release API fixture. No network and no production token.
+set -euo pipefail
+state="${MOCK_GH_STORE:?}"
+mkdir -p "${state}/assets"
+[[ -d "${state}/git" ]] || git init --bare -q "${state}/git"
+export GIT_DIR="${state}/git"
+export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.com
+export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.com
+exec 9>"${state}/mutex"
+flock -x 9
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+json="${work}/out"
+error() { printf '{"status":"%s","message":"fixture failure"}\n' "$1"; exit 1; }
+cmd="$1"; shift
+if [[ "${cmd}" == release ]]; then
+  if [[ "$1" == delete-asset ]]; then
+    tag="$2"; name="$3"
+    rel="$(jq -r --arg tag "${tag}" 'select(.tag_name == $tag) | .id' "${state}"/release-*.json)"
+    [[ "$(jq -r .draft "${state}/release-${rel}.json")" == true ]] || error 422
+    id="$(jq -r .id "${state}/asset-${name}.json")"
+    rm "${state}/asset-${name}.json" "${state}/assets/${id}"
+    exit 0
+  fi
+  [[ "$1" == upload ]] || error 400
+  tag="$2"; file="$3"
+  [[ ! -f "${state}/fail-upload" ]] || error 500
+  rel="$(jq -r --arg tag "${tag}" 'select(.tag_name == $tag) | .id' "${state}"/release-*.json)"
+  [[ -n "${rel}" ]] || error 404
+  [[ "$(jq -r .draft "${state}/release-${rel}.json")" == true ]] || error 422
+  name="${file##*/}"
+  [[ ! -f "${state}/asset-${name}.json" ]] || error 422
+  id="$(($(find "${state}/assets" -type f | wc -l)+1))"
+  cp "${file}" "${state}/assets/${id}"
+  jq -n --arg name "${name}" --argjson id "${id}" --argjson size "$(wc -c < "${file}")" \
+    --arg digest "sha256:$(sha256sum "${file}" | awk '{print $1}')" --argjson release "${rel}" \
+    '{id:$id,name:$name,size:$size,digest:$digest,state:"uploaded",release:$release}' > "${state}/asset-${name}.json"
+  if [[ -f "${state}/starter-upload" ]]; then
+    rm "${state}/starter-upload"
+    jq '.state="starter" | .size=0 | .digest=null' "${state}/asset-${name}.json" > "${work}/starter"
+    mv "${work}/starter" "${state}/asset-${name}.json"
+    : > "${state}/assets/${id}"
+    error 502
+  fi
+  exit 0
+fi
+[[ "${cmd}" == api ]] || error 400
+method=GET input="" filter="" raw=false path=""
+while (( $# )); do
+  case "$1" in
+    --hostname) shift 2 ;;
+    --method) method="$2"; shift 2 ;;
+    --input) input="$2"; shift 2 ;;
+    --jq) filter="$2"; shift 2 ;;
+    -H) [[ "$2" != 'Accept: application/octet-stream' ]] || raw=true; shift 2 ;;
+    --paginate|--allow-escape-sequences) shift ;;
+    *) path="$1"; shift ;;
+  esac
+done
+[[ "${path}" == repos/acme/demo/* ]] || error 404
+path="${path#repos/acme/demo/}"
+printf '%s %s\n' "${method}" "${path}" >> "${state}/calls"
+case "${method}:${path}" in
+  GET:git/ref/tags/*)
+    tag="${path#git/ref/tags/}"
+    for file in "${state}"/release-*.json; do
+      [[ -f "${file}" ]] || continue
+      if jq -e --arg tag "${tag}" '.tag_name==$tag and .draft==false' "${file}" >/dev/null; then
+        jq '{object:{type:"commit",sha:.target_commitish}}' "${file}" > "${json}"; break
+      fi
+    done
+    if [[ -f "${state}/wrong-tag" ]]; then echo '{"object":{"type":"commit","sha":"0000000000000000000000000000000000000000"}}' > "${json}"; fi
+    [[ -f "${json}" ]] || error 404 ;;
+  GET:rules/branches/*)
+    if [[ -f "${state}/unprotected" ]]; then echo '[]' > "${json}"
+    else echo '[{"type":"deletion"},{"type":"non_fast_forward"}]' > "${json}"; fi ;;
+  GET:commits/HEAD)
+    jq -n --arg sha "$(cat "${state}/head" 2>/dev/null || echo 1111111111111111111111111111111111111111)" '{sha:$sha}' > "${json}" ;;
+  GET:git/ref/heads/*)
+    ref="${path#git/ref/}"
+    sha="$(git rev-parse --verify "refs/${ref}" 2>/dev/null)" || error 404
+    jq -n --arg ref "refs/${ref}" --arg sha "${sha}" '{ref:$ref,object:{type:"commit",sha:$sha}}' > "${json}" ;;
+  POST:git/blobs)
+    sha="$(jq -r .content "${input}" | base64 -d | git hash-object -w --stdin)"
+    jq -n --arg sha "${sha}" '{sha:$sha}' > "${json}" ;;
+  GET:git/blobs/*)
+    sha="${path##*/}"
+    git cat-file blob "${sha}" > "${work}/blob" || error 404
+    base64 < "${work}/blob" > "${work}/base64"
+    jq -n --rawfile content "${work}/base64" --argjson size "$(wc -c < "${work}/blob")" \
+      '{encoding:"base64",content:$content,size:$size}' > "${json}" ;;
+  POST:git/trees)
+    index="${work}/index"
+    export GIT_INDEX_FILE="${index}"
+    base="$(jq -r '.base_tree // empty' "${input}")"
+    if [[ -n "${base}" ]]; then git read-tree "${base}"; else git read-tree --empty; fi
+    while IFS= read -r entry; do
+      key="$(jq -r .path <<< "${entry}")"
+      if jq -e 'has("content")' <<< "${entry}" >/dev/null; then
+        sha="$(jq -jr .content <<< "${entry}" | git hash-object -w --stdin)"
+      else sha="$(jq -r .sha <<< "${entry}")"; fi
+      if [[ "${sha}" == null ]]; then printf '0 0000000000000000000000000000000000000000\t%s\n' "${key}" | git update-index --index-info
+      else git update-index --add --cacheinfo "100644,${sha},${key}"; fi
+    done < <(jq -c '.tree[]' "${input}")
+    sha="$(git write-tree)"
+    jq -n --arg sha "${sha}" '{sha:$sha}' > "${json}" ;;
+  GET:git/trees/*)
+    tree="${path#git/trees/}"; tree="${tree%%\?*}"
+    git ls-tree -r "${tree}" | awk '{print $1" "$2" "$3" "$4}' > "${work}/entries"
+    jq -Rn --arg sha "${tree}" '[inputs | split(" ") | {mode:.[0],type:.[1],sha:.[2],path:.[3]}]
+      | {sha:$sha,truncated:false,tree:.}' < "${work}/entries" > "${json}"
+    if [[ -f "${state}/truncated" ]]; then jq '.truncated=true' "${json}" > "${work}/other"; mv "${work}/other" "${json}"; fi ;;
+  POST:git/commits)
+    parents=()
+    while IFS= read -r p; do parents+=(-p "${p}"); done < <(jq -r '.parents[]' "${input}")
+    sha="$(jq -r .message "${input}" | git commit-tree "$(jq -r .tree "${input}")" ${parents[@]+"${parents[@]}"})"
+    jq -n --arg sha "${sha}" '{sha:$sha}' > "${json}" ;;
+  GET:git/commits/*)
+    tree="$(git show -s --format=%T "${path##*/}")" || error 404
+    jq -n --arg sha "${tree}" '{tree:{sha:$sha}}' > "${json}" ;;
+  POST:git/refs)
+    ref="$(jq -r .ref "${input}")"; sha="$(jq -r .sha "${input}")"
+    git update-ref "${ref}" "${sha}" 0000000000000000000000000000000000000000 2>/dev/null || error 422
+    echo '{}' > "${json}" ;;
+  PATCH:git/refs/heads/*)
+    [[ "$(jq -r .force "${input}")" == false ]] || error 400
+    ref="refs/${path#git/refs/}"; sha="$(jq -r .sha "${input}")"; old="$(git rev-parse "${ref}")"
+    if [[ -f "${state}/race" ]]; then
+      rm "${state}/race"
+      other="$(echo concurrent | git commit-tree "$(git show -s --format=%T "${old}")" -p "${old}")"
+      git update-ref "${ref}" "${other}" "${old}"
+      error 422
+    fi
+    git merge-base --is-ancestor "${old}" "${sha}" || error 422
+    git update-ref "${ref}" "${sha}" "${old}" || error 422
+    if [[ -f "${state}/lost-cas" ]]; then rm "${state}/lost-cas"; error 500; fi
+    echo '{}' > "${json}" ;;
+  GET:releases/tags/*)
+    tag="${path#releases/tags/}"
+    for file in "${state}"/release-*.json; do
+      [[ -f "${file}" ]] || continue
+      if jq -e --arg tag "${tag}" '.tag_name==$tag and .draft==false' "${file}" >/dev/null; then cp "${file}" "${json}"; break; fi
+    done
+    [[ -f "${json}" ]] || error 404 ;;
+  GET:releases\?*)
+    find "${state}" -name 'release-*.json' -exec cat {} + | jq -s . > "${json}" ;;
+  POST:releases)
+    id="$(($(find "${state}" -name 'release-*.json' | wc -l)+1))"
+    jq --argjson id "${id}" '.+{id:$id,immutable:false}' "${input}" > "${state}/release-${id}.json"
+    cp "${state}/release-${id}.json" "${json}" ;;
+  GET:releases/assets/*)
+    id="${path##*/}"
+    if [[ "${raw}" == true ]]; then cat "${state}/assets/${id}"; exit; fi
+    find "${state}" -name 'asset-*.json' -exec cat {} + | jq -s --argjson id "${id}" '.[] | select(.id==$id)' > "${json}"
+    [[ -s "${json}" ]] || error 404 ;;
+  GET:releases/*/assets\?*)
+    id="${path#releases/}"; id="${id%%/*}"
+    find "${state}" -name 'asset-*.json' -exec cat {} + | jq -s --argjson id "${id}" '[.[] | select(.release==$id)]' > "${json}" ;;
+  GET:releases/*)
+    cp "${state}/release-${path##*/}.json" "${json}" 2>/dev/null || error 404 ;;
+  PATCH:releases/*)
+    id="${path##*/}"
+    immutable=true
+    [[ ! -f "${state}/mutable" ]] || immutable=false
+    jq --argjson immutable "${immutable}" '.draft=false | .immutable=$immutable' "${state}/release-${id}.json" > "${json}"
+    cp "${json}" "${state}/release-${id}.json"
+    if [[ -f "${state}/lost-publish" ]]; then rm "${state}/lost-publish"; error 500; fi ;;
+  *) echo "unimplemented fixture: ${method}:${path}" >&2; error 400 ;;
+esac
+if [[ -n "${filter}" ]]; then jq -r "${filter}" "${json}"; else cat "${json}"; fi

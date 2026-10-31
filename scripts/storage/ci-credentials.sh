@@ -3,7 +3,8 @@
 #
 #   ci-credentials.sh [--uri URI]
 #
-# file:// storage needs no credentials. For s3:// storage:
+# file:// needs no credentials; github:// uses the job/operator GH_TOKEN
+# or gh login directly (no AWS credential exchange). For s3:// storage:
 #   - RELEASE_FLOW_AWS_ROLE_ARN set: exchange the job's GitHub OIDC token
 #     (audience sts.amazonaws.com) for temporary credentials with
 #     `aws sts assume-role-with-web-identity` (requires `id-token: write`);
@@ -37,7 +38,7 @@ if [[ -z "${uri}" && -f .release-flow.json ]]; then
 fi
 
 case "${uri}" in
-  ''|file://*)
+  ''|file://*|github://*)
     echo "ci-credentials: no storage credentials needed${uri:+ for ${uri}}" >&2
     exit 0
     ;;
