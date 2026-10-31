@@ -29,7 +29,25 @@ existing ruleset with `gh api -X PUT repos/<owner>/<name>/rulesets/<id> --input 
 | `develop-review.json` | `refs/heads/develop` | pull_request, required status check `CI OK` | the release deploy key; repository admins (the explicitly authorized maintainer fast-forward) |
 | `release-tags-immutable.json` | `refs/tags/*.*.*`, `refs/tags/v*.*.*` | deletion, update, non_fast_forward | none |
 | `release-tags-create.json` | `refs/tags/*.*.*`, `refs/tags/v*.*.*` | creation | the release deploy key |
-| `candidates.json` | `refs/heads/release/**` | update, non_fast_forward | none (create and delete stay allowed; candidates are immutable) |
+| `candidates.json` | `refs/heads/release/**`, `refs/heads/release/**/*` | update, non_fast_forward | none (create and delete stay allowed; candidates are immutable) |
+
+The second candidate pattern covers nested test-only branches such as
+`release/test/0.1.1-abcdef012345`. Rulesets use pathname matching: a trailing
+`release/**` alone does not cover that extra directory level, even though the
+same spelling works in an Actions `push.branches` filter. This was verified
+against GitHub's live rules API; the missing pattern returned no rules for the
+test branch until corrected. See GitHub's [ruleset pattern documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository).
+
+After applying the rulesets, verify effective server-side protection from a
+release-flow checkout (read-only; creates no branch or tag):
+
+```bash
+bash tests/pipeline/live-rulesets.sh owner/repository
+```
+
+This checks promotion prerequisites plus both production and nested test
+candidate branches. Supply optional main branch, integration branch and required
+job arguments when the consumer uses different names.
 
 Required status checks also apply to the promotion push: the candidate commit
 already carries `Candidate OK` from `candidate.yml`, so the server enforces the

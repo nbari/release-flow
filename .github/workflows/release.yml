@@ -201,7 +201,7 @@ jobs:
       group: publish-oci-${{ inputs.version || github.ref_name }}
       cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write
     steps:
@@ -296,7 +296,7 @@ jobs:
       group: publish-crates-io-${{ inputs.version || github.ref_name }}
       cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - name: Checkout project at the release ref
@@ -377,8 +377,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_FLOW_GIT_TOKEN: ${{ github.token }}
-          # Empty when the secret is absent. Unset below so cargo uses crates.io
-          # Trusted Publishing (workflow release.yml, environment publish-crates-io).
+          # Empty when absent. Cargo then needs a configured credential provider;
+          # id-token permission alone does not exchange a crates.io publishing token.
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           if [[ -z "${CARGO_REGISTRY_TOKEN}" ]]; then
@@ -399,7 +399,7 @@ jobs:
       group: publish-docs-${{ inputs.version || github.ref_name }}
       cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - name: Checkout project at the release ref
@@ -469,7 +469,7 @@ jobs:
       group: publish-helm-${{ inputs.version || github.ref_name }}
       cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - name: Checkout project at the release ref

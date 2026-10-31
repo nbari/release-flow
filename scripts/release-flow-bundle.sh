@@ -34,6 +34,8 @@ PAYLOAD=(
   scripts/storage/ci-credentials.sh
   scripts/storage/backends/fs.sh
   scripts/storage/backends/s3.sh
+  scripts/storage/backends/github.sh
+  scripts/storage/github-bootstrap.sh
   scripts/publication/ci-install-oras.sh
   scripts/publication/latest.sh
   scripts/publication/ledger.sh
@@ -53,12 +55,12 @@ OPTIONAL=(
   scripts/adapters/cargo.sh
 )
 # Bundle support files: bundle path <- source path.
-SUPPORT_DST=(install.sh docs/ADOPTION.md docs/release-flow.example.json docs/MARKETPLACE.md docs/callers/candidate.yml docs/callers/release.yml docs/RULESETS.md
+SUPPORT_DST=(install.sh docs/GITHUB_STORAGE.md docs/ADOPTION.md docs/release-flow.example.json docs/MARKETPLACE.md docs/callers/candidate.yml docs/callers/release.yml docs/RULESETS.md
   examples/shell/tools/adapter.sh examples/shell/VERSION examples/shell/app/hello.sh examples/shell/.release-flow.json
   docs/rulesets/candidates.json docs/rulesets/develop-integrity.json docs/rulesets/develop-review.json
   docs/rulesets/main-integrity.json docs/rulesets/main-promotion.json docs/rulesets/release-tags-create.json
   docs/rulesets/release-tags-immutable.json)
-SUPPORT_SRC=(scripts/release-flow-install.sh docs/ADOPTION.md docs/release-flow.example.json docs/MARKETPLACE.md docs/callers/candidate.yml docs/callers/release.yml docs/RULESETS.md
+SUPPORT_SRC=(scripts/release-flow-install.sh docs/GITHUB_STORAGE.md docs/ADOPTION.md docs/release-flow.example.json docs/MARKETPLACE.md docs/callers/candidate.yml docs/callers/release.yml docs/RULESETS.md
   examples/shell/tools/adapter.sh examples/shell/VERSION examples/shell/app/hello.sh examples/shell/.release-flow.json
   docs/rulesets/candidates.json docs/rulesets/develop-integrity.json docs/rulesets/develop-review.json
   docs/rulesets/main-integrity.json docs/rulesets/main-promotion.json docs/rulesets/release-tags-create.json

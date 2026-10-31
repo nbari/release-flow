@@ -84,8 +84,9 @@ from `pull_request_target` or another privileged workflow.
    support this release product; avoid adding unrelated applications or assets.
    There must be one root metadata file; no compiled Node distribution is needed.
 3. Provision durable storage, signing and the [release rulesets](RULESETS.md)
-   before the first production promotion. Enable GitHub release immutability
-   through repository settings if desired. This task does not change settings.
+   before the first production promotion. For [GitHub-only storage](GITHUB_STORAGE.md),
+   run the explicit owner bootstrap to enable immutable releases and protect the
+   storage branch. Validation and status commands never change those settings.
 4. Prepare a **production** candidate from approved `develop`, validate and
    retain it, then authorize `just release-promote <branch> <candidate-sha>`.
    The existing pipeline creates its signed immutable `X.Y.Z` tag and publishes

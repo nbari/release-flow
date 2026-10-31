@@ -16,5 +16,5 @@ jobs:
     with:
       adapter: tools/adapter.sh
     permissions:
-      contents: read
+      contents: write
       id-token: write

@@ -65,7 +65,7 @@ When `.release-flow.json` declares `pipeline`, PF13 also requires the candidate 
 
 ## Milestone 3: Durable storage and independent publication
 
-**Storage** (`scripts/storage/`, `file:///` or `s3://` with conditional writes) is content-addressed and create-only: `blobs/sha256/..` (artifacts, `manifest.json`, `SHA256SUMS`), `candidates/<P>/<C>/<run>-<attempt>.json` (written only by the `candidate.yml` `retain` job), `releases/<P>/<V>.json` (the release binding), the append-only `ledger/` of publication events, `locks/` and `latest` pointers updated by compare-and-swap. Every record has an exact JSON schema (`scripts/lib/schema.sh`); nothing is ever sourced as shell. Identical rewrites succeed, different ones conflict.
+**Storage** (`scripts/storage/`, `github://` with immutable release assets and protected Git CAS, or `file:///` / `s3://` with conditional writes) is content-addressed and create-only: `blobs/sha256/..` (artifacts, `manifest.json`, `SHA256SUMS`), `candidates/<P>/<C>/<run>-<attempt>.json` (written only by the `candidate.yml` `retain` job), `releases/<P>/<V>.json` (the release binding), the append-only `ledger/` of publication events, `locks/` and `latest` pointers updated by compare-and-swap. Every record has an exact JSON schema (`scripts/lib/schema.sh`); nothing is ever sourced as shell. Identical rewrites succeed, different ones conflict.
 
 **Publishers** (`.github/workflows/release.yml`, a read-only publisher-selection job and one independent job per configured channel) each run `scripts/publication/publish.sh`: resolve the signed tag (strict trailers, trusted signature, `C` contained in `main`), materialize and verify the stored bytes against the pinned manifest digest, take the channel lock, record `running`, observe the destination, apply only what is missing, observe again, record `succeeded` or `failed` with an error class. Channels: GitHub Release (draft → exact asset inventory → publish, never clobber), OCI (push by digest, immutable version tags, forward-only `latest` through a stored pointer and repair), crates.io (repackage at `C`, publish only byte-identical bytes, confirm the index checksum), docs and Helm (create-only objects, CAS-updated pointer/index that only grows).
 
@@ -120,3 +120,5 @@ Upgrades change managed files and the consumer pin together in a reviewed commit
 See [MARKETPLACE.md](MARKETPLACE.md) for owner-only listing activation, immutable
 version policy and exact metadata requirements; [VERIFICATION.md](VERIFICATION.md)
 records local and actual GitHub execution evidence.
+
+GitHub-only deployments use [immutable release storage](GITHUB_STORAGE.md). The sealed storage prerelease is independent of public release publishing; a publisher outage never removes the retained source bytes. Only retention and publication jobs receive Contents write permission; build/test jobs retain read access.

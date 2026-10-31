@@ -6,14 +6,18 @@
   "conditions": {
     "ref_name": {
       "include": [
-        "refs/heads/release/**"
+        "refs/heads/release/**",
+        "refs/heads/release/**/*"
       ],
       "exclude": []
     }
   },
   "rules": [
     {
-      "type": "update"
+      "type": "update",
+      "parameters": {
+        "update_allows_fetch_and_merge": false
+      }
     },
     {
       "type": "non_fast_forward"

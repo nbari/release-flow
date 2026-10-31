@@ -375,7 +375,7 @@ jobs:
     timeout-minutes: 15
     environment: candidate-storage
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - name: Checkout candidate source
@@ -437,6 +437,7 @@ jobs:
         env:
           RELEASE_FLOW_STORAGE_URI: ${{ needs.guard.outputs.storage_uri }}
           MANIFEST_SHA256: ${{ needs.assemble.outputs.manifest_sha256 }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           bash "${RF_PIPELINE}/scripts/storage/storage.sh" retain-candidate \
             --dir candidate \

@@ -71,12 +71,15 @@ scripts/release-promote.sh
 scripts/release-retry.sh
 scripts/release-status.sh
 scripts/storage/backends/fs.sh
+scripts/storage/backends/github.sh
 scripts/storage/backends/s3.sh
 scripts/storage/ci-credentials.sh
+scripts/storage/github-bootstrap.sh
 scripts/storage/storage.sh
 scripts/verify-candidate.sh"
-PAYLOAD_COUNT=33
-SUPPORT_DOCS="docs/MARKETPLACE.md
+PAYLOAD_COUNT=35
+SUPPORT_DOCS="docs/GITHUB_STORAGE.md
+docs/MARKETPLACE.md
 docs/callers/candidate.yml
 docs/callers/release.yml
 examples/shell/tools/adapter.sh
