@@ -53,6 +53,17 @@ Confirmed defects addressed:
   symlinks. The regression demonstrated outside-file overwrite and a symlinked
   managed destination (147 pass, 2 fail). Exclusive `mktemp` files and cleanup
   now protect both payload writes and the managed-file lock.
+- The first native self candidate exposed packaging defaults leaking into the
+  reference adapter's verification environment. Its Cargo fixture attempted
+  unrelated cross targets. B15 reproduced this (149 pass, 1 fail), then passed
+  after scoping defaults to targets/inventory/package (150 pass). The failed
+  [run 41229529204](https://github.com/nbari/release-flow/actions/runs/41229529204)
+  correctly rejected candidate `e356f71e66553f1f611be489d59e0e00aea536f1`;
+  the correction requires a fresh candidate SHA, not a mutable runtime retry.
+- JSON-encoded NUL in an adapter path could be silently stripped by Bash's
+  command substitution. The validator's regression first accepted that invalid
+  input (57 pass, 1 fail); the schema now rejects adapter control characters
+  before reading the path into shell variables (58 pass).
 - Git remote configuration now rejects option-like values; candidate guard
   shares strict config/path validation and uses literal tag comparisons.
 - External checkout/artifact Actions are pinned to verified upstream commit
@@ -110,7 +121,7 @@ Use this narrow compatibility suppression while retaining all other expression
 and workflow checks; actual GitHub execution is the authority for these fields:
 
 ```sh
-actionlint -shellcheck='' \
+actionlint \
   -ignore 'property "workflow_(ref|sha|repository)" is not defined in object type' \
   .github/workflows/*.yml
 ```
@@ -124,7 +135,7 @@ their upstream release asset metadata.
 ## Execution results
 
 Local gates passed: `just check` (27 Rust unit tests and 8 CLI integration tests),
-`just pipeline-test` (13 suites, 1,421 assertions), ShellCheck for affected runtime
+`just pipeline-test` (13 suites, 1,423 assertions), ShellCheck for affected runtime
 scripts/new tests, yamllint, Action metadata parsing and `git diff --check`.
 Actionlint also passed with embedded ShellCheck enabled and only the documented
 workflow-property compatibility suppression. Live run URLs follow after execution.
@@ -132,3 +143,55 @@ workflow-property compatibility suppression. Live run URLs follow after executio
 Marketplace
 agreement, listing-name acceptance, category selection, first production release,
 production cloud destinations and promotion remain **NOT YET ACTIVATED**.
+
+### GitHub cross-repository execution (2026-10-31)
+
+The isolated repository is private; its run URLs require repository access.
+All scenarios used the public runtime at
+`3045d2cb753aee155013d05cdeb4e9269e3faed4` and no cloud/publisher secrets.
+
+| Scenario | Actual result | GitHub run |
+| --- | --- | --- |
+| Remote root Action on shell consumer | **VERIFIED ON GITHUB**: success; consumer identity and runtime output asserted | [41229508748](https://github.com/nbari/release-flow-consumer-test-20261031/actions/runs/41229508748) |
+| Full reusable candidate with shell adapter | **VERIFIED ON GITHUB**: success; all six required jobs succeeded, retention skipped for test-only mode | [41229509325](https://github.com/nbari/release-flow-consumer-test-20261031/actions/runs/41229509325) |
+| Incorrect configuration pin | **VERIFIED ON GITHUB**: expected rejection in runtime pin step | [41229509082](https://github.com/nbari/release-flow-consumer-test-20261031/actions/runs/41229509082) |
+| Mutable `@sandbox` workflow reference | **VERIFIED ON GITHUB**: expected rejection, full commit SHA required | [41229510069](https://github.com/nbari/release-flow-consumer-test-20261031/actions/runs/41229510069) |
+| Unknown publishing channel | **VERIFIED ON GITHUB**: selection and report failed; all five publishers skipped | [41229511771](https://github.com/nbari/release-flow-consumer-test-20261031/actions/runs/41229511771) |
+
+The positive candidate source was
+`d81e650a182ed3e332673553d20ceeb53fd89170`, based on
+`c7903989b52e7457d5db202ef7734a623282e5b9`. Its real downloaded artifact was
+verified locally, including `VERSION=0.1.1` inside the archive:
+
+- Manifest: `abc934d9ce3f795e0171406766c400ae52b3d5246294e2de40228421d5c5deac`.
+- Artifact `hello-0.1.1.tar.gz`:
+  `62091dddd476960c7e747626f5c3843e60791d32b7734570efac88a55d6ba2fb`.
+- `build_info.release_flow.repository`: `nbari/release-flow`.
+- `build_info.release_flow.sha`: `3045d2cb753aee155013d05cdeb4e9269e3faed4`.
+
+Actual guard logs reported:
+
+```text
+RF_WORKFLOW_REPOSITORY: nbari/release-flow
+RF_WORKFLOW_REF: nbari/release-flow/.github/workflows/candidate.yml@3045d2cb753aee155013d05cdeb4e9269e3faed4
+RF_WORKFLOW_SHA: 3045d2cb753aee155013d05cdeb4e9269e3faed4
+pipeline_mode=call
+pipeline_sha=3045d2cb753aee155013d05cdeb4e9269e3faed4
+project=hello
+adapter=tools/adapter.sh
+```
+
+GitHub's REST `referenced_workflows` contained exactly that path and SHA. The
+production evidence helpers `rf_gh_run_pipeline`, `rf_gh_job_ok` and
+`rf_gh_candidate_artifact` accepted the actual API responses, including the
+`candidate / Candidate OK` job name. This independently establishes the consumer
+source and trusted runtime identities; no mocked API was used for these checks.
+
+The expected failures logged, respectively, configuration/workflow SHA mismatch,
+`got @refs/heads/sandbox`, and `Unknown publisher channel: unknown`.
+No release tags or production publications were created in the test repository.
+
+The public repository's own root Action and full CI also passed at the original
+implementation SHA: [run 41229497363](https://github.com/nbari/release-flow/actions/runs/41229497363).
+The native candidate above deliberately remains recorded as a failed attempt;
+it cannot be promoted. Fresh corrected-candidate results are recorded separately.

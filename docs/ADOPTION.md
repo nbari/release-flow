@@ -48,10 +48,10 @@ The installer copies these files into your repository:
 | `scripts/release-promote.sh` | Guarded atomic promotion (PF01–PF20, signed tag, one atomic push, reconciliation) |
 | `scripts/release-status.sh` | Read-only release and per-channel publication state |
 | `scripts/release-retry.sh` | Re-run one publication channel (dispatch or `--local`) |
-| `scripts/lib/{common,schema,github,tag}.sh` | Shared helpers, strict JSON schemas, GitHub evidence, signed tag format |
+| `scripts/lib/{common,schema,project,github,tag}.sh` | Shared helpers, strict JSON schemas, GitHub evidence, signed tag format |
 | `scripts/storage/storage.sh`, `storage/backends/{fs,s3}.sh` | Content-addressed, create-only durable storage (`file:///`, `s3://`) |
 | `scripts/storage/ci-credentials.sh` | Storage credentials in Actions (OIDC role or static keys) |
-| `scripts/publication/{publish,resolve,latest,ledger}.sh` | Publication driver, signed-tag resolver, latest decision, ledger and locks |
+| `scripts/publication/{plan,publish,resolve,latest,ledger}.sh` | Publication driver, signed-tag resolver, latest decision, ledger and locks |
 | `scripts/publication/ci-install-oras.sh` | Pinned, checksum-verified ORAS for the OCI publisher |
 | `scripts/publishers/{github-release,oci,crates-io,docs,helm}.sh` | Channel publishers (`observe` / `apply`) |
 | `.github/workflows/candidate.yml` | GitHub Actions candidate pipeline (the only artifact builder) |
@@ -278,8 +278,18 @@ Run `tools/adapter.sh verify` locally; `SOURCE_DATE_EPOCH=1234567890
 tools/adapter.sh package 0.1.0 /tmp/hello-package` packages the initial version.
 Set config `adapter` to `tools/adapter.sh` and `project` to your project name.
 
-Rust consumers may install `--with-cargo-adapter` and use
-`scripts/adapters/cargo.sh`. Its CI-specific rustfmt/Clippy, musl and package-tool
+Rust consumers may install `--with-cargo-adapter`. Keep the supplied caller and
+config path `tools/adapter.sh` by using this project-owned wrapper:
+
+```bash
+#!/usr/bin/env bash
+# release-flow-adapter: 1
+exec ./scripts/adapters/cargo.sh "$@"
+```
+
+Commit it executable. Alternatively, point the config directly at
+`scripts/adapters/cargo.sh` and omit the optional caller `adapter` input so it
+uses the config. Its CI-specific rustfmt/Clippy, musl and package-tool
 setup belongs to the adapter; the shared workflows contain no Rust setup.
 Other adapters must install or check their own application prerequisites inside
 the appropriate commands. Use a committed toolchain/version lock where possible.

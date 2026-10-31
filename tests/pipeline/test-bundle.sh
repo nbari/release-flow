@@ -442,4 +442,20 @@ assert_rc 0 "B14: install succeeds without using predictable paths"
 assert_eq 'preserve outside bytes' "$(cat "${outside}")" "B14: never writes through temporary symlink"
 assert_eq regular "$([[ ! -L "${repo}/scripts/release-deploy.sh" ]] && echo regular || echo symlink)" "B14: managed destination stays regular"
 
+t_case "B15: Reference verification does not leak its packaging matrix"
+verify_root="${TF_TMP}/reference-verify"
+mkdir -p "${verify_root}/scripts/adapters" "${verify_root}/tests/pipeline"
+cp "${ROOT}/scripts/adapters/release-flow.sh" "${verify_root}/scripts/adapters/release-flow.sh"
+cat > "${verify_root}/scripts/adapters/cargo.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == verify ]]
+EOF
+cat > "${verify_root}/tests/pipeline/run.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ -z "${RELEASE_FLOW_CARGO_TARGETS:-}" ]] || { echo 'Packaging matrix leaked into verification fixtures' >&2; exit 1; }
+EOF
+chmod +x "${verify_root}/scripts/adapters/cargo.sh"
+t_run env -u RELEASE_FLOW_CARGO_TARGETS bash "${verify_root}/scripts/adapters/release-flow.sh" verify
+assert_rc 0 "B15: verify leaves fixture toolchain selection independent"
+
 t_finish

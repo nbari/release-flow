@@ -21,8 +21,14 @@ root="$(cd "${dir}/../.." && pwd)"
 
 subcommand="${1:-}"
 
-RELEASE_FLOW_CARGO_TARGETS="${RELEASE_FLOW_CARGO_TARGETS:-x86_64-unknown-linux-musl:ubuntu-24.04 aarch64-unknown-linux-musl:ubuntu-24.04-arm x86_64-apple-darwin:macos-latest x86_64-pc-windows-msvc:windows-latest}"
-export RELEASE_FLOW_CARGO_TARGETS
+# Packaging defaults must not reach version/verification commands or their
+# test fixtures, which choose their own host target.
+case "${subcommand}" in
+  targets|inventory|package)
+    RELEASE_FLOW_CARGO_TARGETS="${RELEASE_FLOW_CARGO_TARGETS:-x86_64-unknown-linux-musl:ubuntu-24.04 aarch64-unknown-linux-musl:ubuntu-24.04-arm x86_64-apple-darwin:macos-latest x86_64-pc-windows-msvc:windows-latest}"
+    export RELEASE_FLOW_CARGO_TARGETS
+    ;;
+esac
 
 # all_targets: "target<TAB>runner" rows, platform targets then "any"
 all_targets() {

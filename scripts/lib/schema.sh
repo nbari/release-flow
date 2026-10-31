@@ -76,7 +76,7 @@ def publisher($name; $ks):
 allowed(["schema_version","project","adapter","remote","production_base","test_base","repository","promotion","storage","publishers","pipeline"]),
 (.schema_version | need(. == 1; "schema_version must be 1")),
 (.project | need(project; "invalid project")),
-(.adapter | need(nonempty; "invalid adapter")),
+(.adapter | need(nonempty and (test("[[:cntrl:]]") | not); "adapter must be a non-empty path without control characters")),
 (.remote | need(remotename; "remote must be a Git remote name, not a URL or option")),
 (.production_base | need(branchname; "invalid production_base")),
 (.test_base | need(branchname; "invalid test_base")),

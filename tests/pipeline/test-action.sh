@@ -84,10 +84,10 @@ for json in '{}' '{"schema_version":2}' '[]' '{broken' '{"publishers":{"unknown"
   assert_rc 3 'bad config rejected'
 done
 cp "${ROOT}/examples/shell/.release-flow.json" "${project}/.release-flow.json"
-for filter in '.remote="--upload-pack=evil"' '.production_base="main"' '.test_base=.production_base'; do
+for filter in '.remote="--upload-pack=evil"' '.production_base="main"' '.test_base=.production_base' '.adapter="tools/\u0000adapter.sh"'; do
   jq "${filter}" "${ROOT}/examples/shell/.release-flow.json" > "${project}/.release-flow.json"
   t_run bash "${action}"
-  assert_rc 3 'unsafe Git configuration rejected'
+  assert_rc 3 'unsafe configuration rejected'
 done
 cp "${ROOT}/examples/shell/.release-flow.json" "${project}/.release-flow.json"
 sed '/release-flow-adapter: 1/d' "${ROOT}/examples/shell/tools/adapter.sh" > "${project}/tools/adapter.sh"
