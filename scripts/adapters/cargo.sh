@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# release-flow-adapter: 1
 # Cargo project adapter for release-flow.
 set -euo pipefail
 
@@ -263,6 +264,9 @@ case "${subcommand}" in
     ;;
 
   verify)
+    if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+      rustup component add rustfmt clippy >&2
+    fi
     cargo fmt --all -- --check
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     cargo test --locked --workspace --all-features
@@ -341,6 +345,19 @@ case "${subcommand}" in
       # RELEASE_FLOW_TARGET (one candidate.yml matrix leg) selects one target.
       if [[ -n "${RELEASE_FLOW_TARGET:-}" && "${RELEASE_FLOW_TARGET}" != "${target}" ]]; then
         continue
+      fi
+      # Tool setup belongs to this adapter, not the shared orchestration.
+      if [[ "${GITHUB_ACTIONS:-}" == true && "${target}" == *linux* ]]; then
+        if [[ "${target}" == *musl* ]] && ! command -v musl-gcc >/dev/null 2>&1; then
+          sudo apt-get update -y >&2
+          sudo apt-get install -y musl-tools >&2
+        fi
+        if manifest_has_table 'package.metadata.deb' && ! command -v cargo-deb >/dev/null 2>&1; then
+          cargo install cargo-deb --version 3.8.0 --locked >&2
+        fi
+        if manifest_has_table 'package.metadata.generate-rpm' && ! command -v cargo-generate-rpm >/dev/null 2>&1; then
+          cargo install cargo-generate-rpm --version 0.21.0 --locked >&2
+        fi
       fi
       bin_file="${bin_name}"
       case "${target}" in

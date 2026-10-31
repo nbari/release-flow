@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# release-flow-adapter: 1
 # Project adapter for release-flow itself: the Cargo reference adapter per
 # platform, plus the platform-independent artifacts (target "any"): the
 # versioned distribution bundle (release-flow-bundle-<V>.tar.gz) and the
@@ -20,8 +21,14 @@ root="$(cd "${dir}/../.." && pwd)"
 
 subcommand="${1:-}"
 
-RELEASE_FLOW_CARGO_TARGETS="${RELEASE_FLOW_CARGO_TARGETS:-x86_64-unknown-linux-musl:ubuntu-24.04 aarch64-unknown-linux-musl:ubuntu-24.04-arm x86_64-apple-darwin:macos-latest x86_64-pc-windows-msvc:windows-latest}"
-export RELEASE_FLOW_CARGO_TARGETS
+# Packaging defaults must not reach version/verification commands or their
+# test fixtures, which choose their own host target.
+case "${subcommand}" in
+  targets|inventory|package)
+    RELEASE_FLOW_CARGO_TARGETS="${RELEASE_FLOW_CARGO_TARGETS:-x86_64-unknown-linux-musl:ubuntu-24.04 aarch64-unknown-linux-musl:ubuntu-24.04-arm x86_64-apple-darwin:macos-latest x86_64-pc-windows-msvc:windows-latest}"
+    export RELEASE_FLOW_CARGO_TARGETS
+    ;;
+esac
 
 # all_targets: "target<TAB>runner" rows, platform targets then "any"
 all_targets() {
@@ -61,8 +68,17 @@ package_name() {
 }
 
 case "${subcommand}" in
-  version|set-version|verify)
+  version|set-version)
     exec "${dir}/cargo.sh" "$@"
+    ;;
+
+  verify)
+    "${dir}/cargo.sh" verify
+    if [[ "${GITHUB_ACTIONS:-}" == true ]] && ! command -v just >/dev/null 2>&1; then
+      bash "${root}/tests/pipeline/ci-install-just.sh"
+      export PATH="${RUNNER_TEMP}/just-bin:${PATH}"
+    fi
+    bash "${root}/tests/pipeline/run.sh"
     ;;
 
   targets)

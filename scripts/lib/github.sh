@@ -42,6 +42,45 @@ rf_gh_candidate_run() {
   printf '%s\n' "${run}"
 }
 
+# rf_gh_run_pipeline <run-json> <pipeline-repo> <pipeline-sha>
+# Pipeline evidence of a run already selected by rf_gh_candidate_run. No API
+# call. With no pipeline declared, prints "local" when the run called no
+# reusable workflow. With a pipeline declared, prints "<repo>@<sha>" when the
+# run called exactly that repository's candidate.yml at that SHA. Otherwise
+# writes the reason to stderr and returns 1.
+rf_gh_run_pipeline() {
+  local run_json="$1" pipe_repo="$2" pipe_sha="$3" result kind
+  if ! result="$(printf '%s' "${run_json}" | jq -c --arg repo "${pipe_repo}" --arg sha "${pipe_sha}" '
+    def ref_paths:
+      [(.referenced_workflows // [])[] | (.path // "unknown")]
+      | if length == 0 then "none" else join(", ") end;
+    . as $run
+    | if ($repo == "" and $sha == "") then
+        if ((.referenced_workflows // []) | length) == 0 then {ok: "local"}
+        else {err: ("run " + ($run.id | tostring) + " calls reusable workflow(s) " + ref_paths + " but .release-flow.json declares no pipeline")}
+        end
+      else
+        ($repo + "/.github/workflows/candidate.yml@" + $sha) as $want
+        | (.referenced_workflows // []) as $refs
+        | if ($refs | length) == 1 and $refs[0].path == $want and ($refs[0].sha == $sha) then
+            {ok: ($repo + "@" + $sha)}
+          else
+            {err: ("run " + ($run.id | tostring) + " must call exactly " + $want + " (sha " + $sha + "); found: " + ref_paths)}
+          end
+      end
+  ')"; then
+    echo "cannot read referenced_workflows of the candidate run" >&2
+    return 1
+  fi
+  kind="$(printf '%s' "${result}" | jq -r 'if has("ok") then "ok" else "err" end')"
+  if [[ "${kind}" == "ok" ]]; then
+    printf '%s\n' "$(printf '%s' "${result}" | jq -r .ok)"
+    return 0
+  fi
+  printf '%s\n' "$(printf '%s' "${result}" | jq -r .err)" >&2
+  return 1
+}
+
 # rf_gh_job_ok <repo> <run-id> <attempt> <job-name>: the job concluded success
 # in that attempt.
 rf_gh_job_ok() {

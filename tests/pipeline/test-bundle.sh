@@ -50,11 +50,14 @@ scripts/candidate-manifest.sh
 scripts/candidate-targets.sh
 scripts/lib/common.sh
 scripts/lib/github.sh
+scripts/lib/project.sh
 scripts/lib/schema.sh
 scripts/lib/tag.sh
+scripts/pipeline-pin.sh
 scripts/publication/ci-install-oras.sh
 scripts/publication/latest.sh
 scripts/publication/ledger.sh
+scripts/publication/plan.sh
 scripts/publication/publish.sh
 scripts/publication/resolve.sh
 scripts/publishers/crates-io.sh
@@ -72,8 +75,15 @@ scripts/storage/backends/s3.sh
 scripts/storage/ci-credentials.sh
 scripts/storage/storage.sh
 scripts/verify-candidate.sh"
-PAYLOAD_COUNT=30
-SUPPORT_DOCS="docs/ADOPTION.md
+PAYLOAD_COUNT=33
+SUPPORT_DOCS="docs/MARKETPLACE.md
+docs/callers/candidate.yml
+docs/callers/release.yml
+examples/shell/tools/adapter.sh
+examples/shell/VERSION
+examples/shell/app/hello.sh
+examples/shell/.release-flow.json
+docs/ADOPTION.md
 docs/RULESETS.md
 docs/release-flow.example.json
 docs/rulesets/candidates.json
@@ -95,12 +105,14 @@ t_run bash "${bundler}" --version 9.9 --out "${TF_TMP}/b1-c"
 assert_rc 2 "B1: rejects a non-SemVer version"
 
 t_case "B2: Bundle contents and BUNDLE.json"
-expected_files="$(printf '%s\n' \
-  "release-flow-bundle-9.9.9/BUNDLE.json" \
-  "release-flow-bundle-9.9.9/install.sh" \
-  "release-flow-bundle-9.9.9/optional/scripts/adapters/cargo.sh" \
-  $(printf '%s\n' "${SUPPORT_DOCS}" | sed 's|^|release-flow-bundle-9.9.9/|') \
-  $(printf '%s\n' "${PAYLOAD_PATHS}" | sed 's|^|release-flow-bundle-9.9.9/payload/|') | sort)"
+expected_files="$(
+  {
+    printf '%s\n' "release-flow-bundle-9.9.9/BUNDLE.json" "release-flow-bundle-9.9.9/install.sh" \
+      "release-flow-bundle-9.9.9/optional/scripts/adapters/cargo.sh"
+    printf '%s\n' "${SUPPORT_DOCS}" | sed 's|^|release-flow-bundle-9.9.9/|'
+    printf '%s\n' "${PAYLOAD_PATHS}" | sed 's|^|release-flow-bundle-9.9.9/payload/|'
+  } | sort
+)"
 actual_files="$(tar -tzf "${a1}" | grep -v '/$' | sort)"
 assert_eq "${expected_files}" "${actual_files}" "B2: archive file set matches the contract"
 b2="$(extract_bundle "${a1}" "${TF_TMP}/b2")"
@@ -322,7 +334,7 @@ done
 
 t_case "B11: release-flow adapter package builds the Cargo archive and the bundle"
 src="${TF_TMP}/b11-src"
-for f in scripts/adapters/release-flow.sh scripts/adapters/cargo.sh scripts/release-flow-bundle.sh \
+for f in action.yml scripts/action.sh scripts/adapters/release-flow.sh scripts/adapters/cargo.sh scripts/release-flow-bundle.sh \
   scripts/release-flow-install.sh ${PAYLOAD_PATHS} ${SUPPORT_DOCS}; do
   mkdir -p "$(dirname "${src}/${f}")"
   cp -p "${ROOT}/${f}" "${src}/${f}"
@@ -357,8 +369,8 @@ assert_eq "demo-app-0.3.0/Cargo.toml" "$(tar -tzf "${dist}/demo-app-0.3.0.crate"
 rm -rf "${TF_TMP}/b11-any"
 RELEASE_FLOW_TARGET=any SOURCE_DATE_EPOCH=1700000000 t_run "${src}/scripts/adapters/release-flow.sh" package 0.3.0 "${TF_TMP}/b11-any"
 assert_rc 0 "B11: the any leg packages"
-assert_eq "demo-app-0.3.0.crate release-flow-bundle-0.3.0.tar.gz" "$(ls "${TF_TMP}/b11-any" | sort | tr '\n' ' ' | sed 's/ $//')" "B11: the any leg builds only platform-independent artifacts"
-assert_eq "${expected_names}" "$(ls "${dist}" | sort)" "B11: package produces exactly the inventory artifacts"
+assert_eq "demo-app-0.3.0.crate release-flow-bundle-0.3.0.tar.gz" "$(find "${TF_TMP}/b11-any" -maxdepth 1 -type f -printf '%f\n' | sort | tr '\n' ' ' | sed 's/ $//')" "B11: the any leg builds only platform-independent artifacts"
+assert_eq "${expected_names}" "$(find "${dist}" -maxdepth 1 -type f -printf '%f\n' | sort)" "B11: package produces exactly the inventory artifacts"
 assert_contains "${expected_names}" "release-flow-bundle-0.3.0.tar.gz" "B11: bundle is an inventory artifact"
 b11="$(extract_bundle "${dist}/release-flow-bundle-0.3.0.tar.gz" "${TF_TMP}/b11-x")"
 assert_eq "0.3.0" "$(jq -r .bundle_version "${b11}/BUNDLE.json")" "B11: bundle carries the package version"
@@ -384,5 +396,66 @@ for filter in 'del(.optional)' '.payload = {}' '.payload[0].mode = "777"' 'del(.
   assert_eq "absent" "$(exists "${repo}/.release-flow-bundle.json")" "B12 '${filter}': no lock written"
   assert_eq "absent" "$(exists "${repo}/.justfiles/deploy.just")" "B12 '${filter}': nothing written"
 done
+
+t_case "B13: Reusable bundles pin callers and configuration to clean source"
+source_repo="${TF_TMP}/bundle-source"
+git init --quiet "${source_repo}"
+for path in scripts docs examples .github .justfiles; do
+  cp -R "${ROOT}/${path}" "${source_repo}/${path}"
+done
+cp "${ROOT}/action.yml" "${source_repo}/action.yml"
+git -C "${source_repo}" add .
+git -C "${source_repo}" commit --quiet -m "Record bundle sources"
+source_sha="$(git -C "${source_repo}" rev-parse HEAD)"
+t_run bash "${source_repo}/scripts/release-flow-bundle.sh" --version 9.9.8 --out "${TF_TMP}/reusable-out" --workflow-mode reusable
+assert_rc 0 "B13: clean reusable bundle builds"
+reusable="$(extract_bundle "${T_OUT}" "${TF_TMP}/reusable-extract")"
+assert_contains "$(cat "${reusable}/payload/.github/workflows/candidate.yml")" "candidate.yml@${source_sha}" "B13: candidate pinned"
+assert_contains "$(cat "${reusable}/payload/.github/workflows/release.yml")" "release.yml@${source_sha}" "B13: release pinned"
+assert_eq "${source_sha}" "$(jq -r .pipeline.sha "${reusable}/docs/release-flow.example.json")" "B13: example pin matches"
+assert_eq reusable "$(jq -r .workflow_mode "${reusable}/BUNDLE.json")" "B13: mode recorded"
+repo="$(tf_fixture_repo bundle-reusable)"
+t_run bash "${reusable}/install.sh" --target "${repo}"
+assert_rc 0 "B13: installs"
+assert_contains "${T_ERR}" "pipeline.sha=${source_sha}" "B13: explains config upgrade"
+t_run bash "${reusable}/install.sh" --target "${repo}"
+assert_rc 0 "B13: idempotent install"
+t_run bash "${reusable}/install.sh" --target "${repo}" --check
+assert_rc 0 "B13: checks rendered checksums"
+printf '\n# dirty\n' >> "${source_repo}/scripts/lib/common.sh"
+t_run bash "${source_repo}/scripts/release-flow-bundle.sh" --version 9.9.7 --out "${TF_TMP}/dirty-out" --workflow-mode reusable
+assert_rc 1 "B13: dirty source cannot claim pinned runtime"
+
+t_case "B14: Installer temporary files cannot follow planted symlinks"
+repo="$(tf_fixture_repo bundle-temp-link)"
+outside="${TF_TMP}/outside-installer"
+printf 'preserve outside bytes\n' > "${outside}"
+mkdir -p "${repo}/scripts"
+# The inner shell must expand its own PID for the attack reproduction.
+# shellcheck disable=SC2016
+t_run bash -c '
+  ln -s "$3" "$2/scripts/release-deploy.sh.release-flow-tmp.$$"
+  ln -s "$3" "$2/.release-flow-bundle.json.tmp.$$"
+  exec bash "$1/install.sh" --target "$2"
+' _ "${b2}" "${repo}" "${outside}"
+assert_rc 0 "B14: install succeeds without using predictable paths"
+assert_eq 'preserve outside bytes' "$(cat "${outside}")" "B14: never writes through temporary symlink"
+assert_eq regular "$([[ ! -L "${repo}/scripts/release-deploy.sh" ]] && echo regular || echo symlink)" "B14: managed destination stays regular"
+
+t_case "B15: Reference verification does not leak its packaging matrix"
+verify_root="${TF_TMP}/reference-verify"
+mkdir -p "${verify_root}/scripts/adapters" "${verify_root}/tests/pipeline"
+cp "${ROOT}/scripts/adapters/release-flow.sh" "${verify_root}/scripts/adapters/release-flow.sh"
+cat > "${verify_root}/scripts/adapters/cargo.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == verify ]]
+EOF
+cat > "${verify_root}/tests/pipeline/run.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ -z "${RELEASE_FLOW_CARGO_TARGETS:-}" ]] || { echo 'Packaging matrix leaked into verification fixtures' >&2; exit 1; }
+EOF
+chmod +x "${verify_root}/scripts/adapters/cargo.sh"
+t_run env -u RELEASE_FLOW_CARGO_TARGETS bash "${verify_root}/scripts/adapters/release-flow.sh" verify
+assert_rc 0 "B15: verify leaves fixture toolchain selection independent"
 
 t_finish

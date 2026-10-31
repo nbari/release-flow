@@ -159,7 +159,7 @@ t_run bash "${repo}/scripts/release-retry.sh" --project-dir "${repo}" 0.1.1 bogu
 assert_rc 2 "IN03: unknown channel exits 2"
 
 t_case "IN04: Bundle and workflow contract"
-assert_eq "30" "$(jq '.payload | length' "${TF_BUNDLE_ROOT}/BUNDLE.json")" "IN04: the bundle carries all 30 payload files"
+assert_eq "33" "$(jq '.payload | length' "${TF_BUNDLE_ROOT}/BUNDLE.json")" "IN04: the bundle carries all 33 payload files"
 missing=0
 while IFS= read -r p; do
   [[ -f "${TF_BUNDLE_ROOT}/payload/${p}" ]] || missing=$(( missing + 1 ))
@@ -173,7 +173,7 @@ done
 cd "${orig_dir}"
 assert_eq "present" "$(exists "${ROOT}/.github/workflows/release.yml")" "IN04: release.yml is present"
 assert_eq "absent" "$(exists "${ROOT}/.github/actions/release-is-latest")" "IN04: release-is-latest action is gone"
-assert_eq "" "$(grep -nE '^[[:space:]]+needs:' "${ROOT}/.github/workflows/release.yml" || true)" "IN04: release.yml has no needs"
+assert_eq "5" "$(grep -c '^    needs: plan$' "${ROOT}/.github/workflows/release.yml")" "IN04: each publisher depends only on the read-only plan"
 assert_eq "" "$(grep -rlE 'release\.env|Candidate run:' "${ROOT}/.github" "${ROOT}/scripts" || true)" "IN04: no release.env or free-form tag parsing"
 assert_eq "" "$(grep -rnE '^[[:space:]]*(source|\.)[[:space:]]' "${ROOT}/scripts" "${ROOT}/.github/workflows" \
   | grep -vE ':[0-9]+:[[:space:]]*\.[[:space:]]+as[[:space:]]' \

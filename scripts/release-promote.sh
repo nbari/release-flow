@@ -5,7 +5,7 @@
 #
 # Decide (PF01-PF20, read-only): the exact candidate commit, its production
 # trailers and topology, that it edits no release tooling, the remote state,
-# the GitHub evidence (workflow run, required job, artifact), the downloaded
+# the GitHub evidence (workflow run and its pinned pipeline, required job, artifact), the downloaded
 # manifest, the durable storage record and blobs, signing readiness and the
 # server-side protection rules. Act: create (or reuse) the signed tag X.Y.Z,
 # re-check the remote, then ONE `git push --atomic` of main, the production base
@@ -292,6 +292,8 @@ workflow="$(rf_cfg .promotion.candidate_workflow)"
 [[ -n "${workflow}" ]] || workflow=".github/workflows/candidate.yml"
 required_job="$(rf_cfg .promotion.required_job)"
 [[ -n "${required_job}" ]] || required_job="Candidate OK"
+pipeline_repo="$(rf_cfg .pipeline.repository)"
+pipeline_sha="$(rf_cfg .pipeline.sha)"
 pf_pass PF09 "changes only $(printf '%s\n' "${changed}" | tr '\n' ' ')(no release tooling); config at ${commit:0:12} is authoritative"
 
 # PF10 version and tags
@@ -342,7 +344,8 @@ if ! run_json="$(rf_gh_candidate_run "${repository}" "${workflow}" "${commit}" "
 fi
 run_id="$(printf '%s' "${run_json}" | jq -r '.id | tostring')"
 latest_attempt="$(printf '%s' "${run_json}" | jq -r '.run_attempt // 1')"
-pf_pass PF13 "${workflow} run ${run_id} (push on ${candidate}) completed successfully"
+pipeline_desc="$(rf_gh_run_pipeline "${run_json}" "${pipeline_repo}" "${pipeline_sha}" 2>"${WORK}/gh.err")" || pf_fail PF13 "$(cat "${WORK}/gh.err")"
+pf_pass PF13 "${workflow} run ${run_id} (push on ${candidate}, pipeline ${pipeline_desc}) completed successfully"
 
 # PF14 the required job in the latest attempt
 if ! rf_gh_job_ok "${repository}" "${run_id}" "${latest_attempt}" "${required_job}" 2>"${WORK}/gh.err"; then

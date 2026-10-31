@@ -7,7 +7,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF' >&2
-Usage: release-flow-bundle.sh --version X.Y.Z --out DIR
+Usage: release-flow-bundle.sh --version X.Y.Z --out DIR [--workflow-mode vendored|reusable]
 EOF
   exit 2
 }
@@ -27,7 +27,9 @@ PAYLOAD=(
   scripts/lib/common.sh
   scripts/lib/github.sh
   scripts/lib/schema.sh
+  scripts/lib/project.sh
   scripts/lib/tag.sh
+  scripts/pipeline-pin.sh
   scripts/storage/storage.sh
   scripts/storage/ci-credentials.sh
   scripts/storage/backends/fs.sh
@@ -36,6 +38,7 @@ PAYLOAD=(
   scripts/publication/latest.sh
   scripts/publication/ledger.sh
   scripts/publication/publish.sh
+  scripts/publication/plan.sh
   scripts/publication/resolve.sh
   scripts/publishers/crates-io.sh
   scripts/publishers/docs.sh
@@ -50,19 +53,23 @@ OPTIONAL=(
   scripts/adapters/cargo.sh
 )
 # Bundle support files: bundle path <- source path.
-SUPPORT_DST=(install.sh docs/ADOPTION.md docs/release-flow.example.json docs/RULESETS.md
+SUPPORT_DST=(install.sh docs/ADOPTION.md docs/release-flow.example.json docs/MARKETPLACE.md docs/callers/candidate.yml docs/callers/release.yml docs/RULESETS.md
+  examples/shell/tools/adapter.sh examples/shell/VERSION examples/shell/app/hello.sh examples/shell/.release-flow.json
   docs/rulesets/candidates.json docs/rulesets/develop-integrity.json docs/rulesets/develop-review.json
   docs/rulesets/main-integrity.json docs/rulesets/main-promotion.json docs/rulesets/release-tags-create.json
   docs/rulesets/release-tags-immutable.json)
-SUPPORT_SRC=(scripts/release-flow-install.sh docs/ADOPTION.md docs/release-flow.example.json docs/RULESETS.md
+SUPPORT_SRC=(scripts/release-flow-install.sh docs/ADOPTION.md docs/release-flow.example.json docs/MARKETPLACE.md docs/callers/candidate.yml docs/callers/release.yml docs/RULESETS.md
+  examples/shell/tools/adapter.sh examples/shell/VERSION examples/shell/app/hello.sh examples/shell/.release-flow.json
   docs/rulesets/candidates.json docs/rulesets/develop-integrity.json docs/rulesets/develop-review.json
   docs/rulesets/main-integrity.json docs/rulesets/main-promotion.json docs/rulesets/release-tags-create.json
   docs/rulesets/release-tags-immutable.json)
 
 version=""
 out_dir=""
+workflow_mode=vendored
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --workflow-mode) [[ $# -ge 2 ]] || usage; workflow_mode="$2"; shift 2 ;;
     --version)
       [[ $# -ge 2 ]] || usage
       version="$2"
@@ -79,6 +86,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "${version}" && -n "${out_dir}" ]] || usage
+case "${workflow_mode}" in vendored|reusable) ;; *) usage ;; esac
 if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Invalid bundle version: ${version} (expected X.Y.Z)" >&2
   exit 2
@@ -90,7 +98,9 @@ done
 
 src_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-all_sources=("${PAYLOAD[@]}" "${OPTIONAL[@]}" "${SUPPORT_SRC[@]}")
+# Include every trusted Action entrypoint in the revision's clean-tree check,
+# even though the root Action is consumed by uses: rather than installed.
+all_sources=("${PAYLOAD[@]}" "${OPTIONAL[@]}" "${SUPPORT_SRC[@]}" action.yml scripts/action.sh)
 for f in "${all_sources[@]}"; do
   if [[ ! -f "${src_root}/${f}" ]]; then
     echo "Bundle source file missing: ${src_root}/${f}" >&2
@@ -104,6 +114,10 @@ if [[ -z "$(git -C "${src_root}" status --porcelain --untracked-files=all -- "${
 else
   source_tree_clean=false
   echo "Warning: bundled source files differ from HEAD ${source_commit:0:12}; source_tree_clean=false" >&2
+fi
+if [[ "${workflow_mode}" == reusable && "${source_tree_clean}" != true ]]; then
+  echo 'Reusable bundles require clean committed sources: workflow pins must identify the bundled runtime.' >&2
+  exit 1
 fi
 
 epoch="${SOURCE_DATE_EPOCH:-$(git -C "${src_root}" log -1 --format=%ct)}"
@@ -140,6 +154,17 @@ stage_file() {
   mode="$(file_mode "${path}")"
   mkdir -p "$(dirname "${bundle_dir}/${dst}")"
   cp "${src_root}/${src}" "${bundle_dir}/${dst}"
+  if [[ "${workflow_mode}" == reusable ]]; then
+    case "${path}" in
+      .github/workflows/candidate.yml|.github/workflows/release.yml)
+        sed "s/__RELEASE_FLOW_SHA__/${source_commit}/g" "${src_root}/docs/callers/${path##*/}" > "${bundle_dir}/${dst}"
+        ;;
+      docs/release-flow.example.json)
+        jq --arg sha "${source_commit}" '.pipeline={repository:"nbari/release-flow",sha:$sha} | .promotion.required_job="candidate / Candidate OK"' \
+          "${src_root}/${src}" > "${bundle_dir}/${dst}"
+        ;;
+    esac
+  fi
   chmod "0${mode}" "${bundle_dir}/${dst}"
   sum="$(sha256sum "${bundle_dir}/${dst}" | awk '{print $1}')"
   printf '%s\t%s\t%s\n' "${path}" "${sum}" "${mode}"
@@ -162,6 +187,7 @@ tsv_to_json='split("\n") | map(select(length > 0) | split("\t") | {path: .[0], s
 jq -n \
   --arg version "${version}" \
   --arg commit "${source_commit}" \
+  --arg workflow_mode "${workflow_mode}" \
   --argjson clean "${source_tree_clean}" \
   --argjson payload "$(printf '%s' "${payload_tsv}" | jq -R -s "${tsv_to_json}")" \
   --argjson optional "$(printf '%s' "${optional_tsv}" | jq -R -s "${tsv_to_json}")" \
@@ -170,6 +196,7 @@ jq -n \
     schema_version: 1,
     bundle_version: $version,
     source_commit: $commit,
+    workflow_mode: $workflow_mode,
     source_tree_clean: $clean,
     min_just: "1.27.0",
     payload: $payload,

@@ -12,6 +12,8 @@ if [[ -n "${RF_SCHEMA_LOADED:-}" ]]; then
 fi
 RF_SCHEMA_LOADED=1
 
+# jq variables are literal data for jq, not shell expansions.
+# shellcheck disable=SC2016
 RF_SCHEMA_DEFS='
 def err(m): "schema error: " + m;
 def str: type == "string";
@@ -24,6 +26,7 @@ def runid: str and test("^[0-9]+$");
 def posint: type == "number" and . >= 1 and floor == .;
 def nonneg: type == "number" and . >= 0 and floor == .;
 def nonempty: str and length > 0;
+def remotename: str and test("^[A-Za-z0-9][A-Za-z0-9._-]*$");
 def branchname: str and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (test("\\.\\.|//|/$|\\.lock$") | not);
 def tpl: str and length > 0 and (gsub("\\{(project|version)\\}"; "") | test("[{}]") | not);
 def uri: str and test("^(file:///|s3://[a-z0-9][a-z0-9.-]*[a-z0-9](/|$))");
@@ -51,6 +54,7 @@ def identity:
    then err("candidate_branch does not carry the base commit prefix") else empty end);
 '
 
+# shellcheck disable=SC2016
 RF_SCHEMA_CONFIG='
 def publisher($name; $ks):
   .[$name] | if . == null then empty else
@@ -69,19 +73,21 @@ def publisher($name; $ks):
       opt("latest"; type == "boolean"; $name + ".latest must be a boolean")
     else empty end)
   end;
-allowed(["schema_version","project","adapter","remote","production_base","test_base","repository","promotion","storage","publishers"]),
+allowed(["schema_version","project","adapter","remote","production_base","test_base","repository","promotion","storage","publishers","pipeline"]),
 (.schema_version | need(. == 1; "schema_version must be 1")),
 (.project | need(project; "invalid project")),
-(.adapter | need(nonempty; "invalid adapter")),
-(.remote | need(nonempty; "invalid remote")),
+(.adapter | need(nonempty and (test("[[:cntrl:]]") | not); "adapter must be a non-empty path without control characters")),
+(.remote | need(remotename; "remote must be a Git remote name, not a URL or option")),
 (.production_base | need(branchname; "invalid production_base")),
 (.test_base | need(branchname; "invalid test_base")),
+(need(.production_base != .test_base; "production_base and test_base must differ")),
+(.production_base, .test_base | need(. != "main" and (startswith("release/") | not); "main and release/* cannot be candidate bases")),
 opt("repository"; repo; "invalid repository"),
 (if has("promotion") then .promotion |
   allowed(["main_branch","push_remote","candidate_workflow","required_job","signature_verification","allowed_signers","publisher_ref"]),
   (if type == "object" then
     opt("main_branch"; branchname; "invalid promotion.main_branch"),
-    opt("push_remote"; nonempty; "invalid promotion.push_remote"),
+    opt("push_remote"; remotename; "promotion.push_remote must be a Git remote name"),
     opt("candidate_workflow"; str and test("^\\.github/workflows/[A-Za-z0-9._-]+\\.ya?ml$"); "invalid promotion.candidate_workflow"),
     opt("required_job"; nonempty; "invalid promotion.required_job"),
     opt("signature_verification"; . == "github" or . == "allowed-signers"; "promotion.signature_verification must be github or allowed-signers"),
@@ -112,6 +118,10 @@ opt("repository"; repo; "invalid repository"),
     (if (.docs // null) != null then .docs | need(has("artifact") and has("uri"); "docs requires artifact and uri") else empty end),
     (if (.helm // null) != null then .helm | need(has("artifact") and has("uri") and has("base_url"); "helm requires artifact, uri and base_url") else empty end)
   else empty end)
+ else empty end),
+(if has("pipeline") then .pipeline | exact(["repository","sha"]),
+  (if type == "object" then (.repository | need(repo; "invalid pipeline.repository")),
+                             (.sha | need(commit; "invalid pipeline.sha")) else empty end)
  else empty end)
 '
 

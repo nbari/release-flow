@@ -558,4 +558,58 @@ assert_eq "${TF_C}" "$(git --git-dir="${TF_TMP}/pr24.git" rev-parse 'refs/tags/0
 assert_eq "${main24}" "$(git --git-dir="${TF_TMP}/pr24.git" rev-parse refs/heads/main)" "PR24: main does not contain C and is not repaired"
 assert_eq "absent" "$(exists "$(lock_path "${repo}")")" "PR24: lock released"
 
+t_case "PR25: Pinned pipeline evidence (PF13)"
+P="0123456789abcdef0123456789abcdef01234567"
+pr25_setup() {
+  jq --arg sha "${P}" \
+    '.pipeline = {repository: "nbari/release-flow", sha: $sha} | .promotion.required_job = "candidate / Candidate OK"' \
+    .release-flow.json > .release-flow.json.tmp
+  mv .release-flow.json.tmp .release-flow.json
+}
+TF_RELEASE_EXTRA_SETUP=pr25_setup
+repo="$(tf_release_repo pr25)"
+TF_RELEASE_EXTRA_SETUP=""
+tf_candidate "${repo}" patch
+e4="repos/acme/pr25/actions/workflows/candidate.yml/runs?head_sha=${TF_C}&event=push&per_page=100"
+e5="repos/acme/pr25/actions/runs/${TF_RUN}/attempts/1/jobs?per_page=100"
+tf_gh_edit "${e5}" '(.jobs[] | select(.name == "Candidate OK") | .name) = "candidate / Candidate OK"'
+tf_gh_edit "repos/acme/pr25/rules/branches/main" '(.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[0].context) = "candidate / Candidate OK"'
+tf_gh_edit "${e4}" ".workflow_runs[0].referenced_workflows = [{path: \"nbari/release-flow/.github/workflows/candidate.yml@${P}\", sha: \"${P}\"}]"
+cp "$(tf_gh_file "${e4}")" "${TF_TMP}/pr25-e4"
+promote "${repo}" --candidate "${TF_BRANCH}" --commit "${TF_C}" --dry-run
+assert_rc 0 "PR25: dry run succeeds"
+assert_eq "passed" "$(out_kv preflight)" "PR25: preflight=passed"
+assert_contains "${T_ERR}" "pipeline nbari/release-flow@${P}" "PR25: pass text names the pin"
+tf_gh_edit "${e4}" ".workflow_runs[0].referenced_workflows[0].path = \"nbari/release-flow/.github/workflows/candidate.yml@refs/tags/v1\""
+assert_refused "${repo}" pr25 PF13 "must call exactly" "PR25 tag pin" --candidate "${TF_BRANCH}" --commit "${TF_C}" --dry-run
+cp "${TF_TMP}/pr25-e4" "$(tf_gh_file "${e4}")"
+tf_gh_edit "${e4}" '.workflow_runs[0].referenced_workflows[0].sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+assert_refused "${repo}" pr25 PF13 "must call exactly" "PR25 sha differs" --candidate "${TF_BRANCH}" --commit "${TF_C}" --dry-run
+cp "${TF_TMP}/pr25-e4" "$(tf_gh_file "${e4}")"
+tf_gh_edit "${e4}" ".workflow_runs[0].referenced_workflows[0].path = \"nbari/release-flow/.github/workflows/release.yml@${P}\""
+assert_refused "${repo}" pr25 PF13 "must call exactly" "PR25 release.yml path" --candidate "${TF_BRANCH}" --commit "${TF_C}" --dry-run
+cp "${TF_TMP}/pr25-e4" "$(tf_gh_file "${e4}")"
+tf_gh_edit "${e4}" '.workflow_runs[0].referenced_workflows = []'
+assert_refused "${repo}" pr25 PF13 "found: none" "PR25 no referenced workflow" --candidate "${TF_BRANCH}" --commit "${TF_C}" --dry-run
+cp "${TF_TMP}/pr25-e4" "$(tf_gh_file "${e4}")"
+tf_gh_edit "${e4}" ".workflow_runs[0].referenced_workflows = [{path: \"nbari/release-flow/.github/workflows/candidate.yml@${P}\", sha: \"${P}\"}, {path: \"nbari/release-flow/.github/workflows/release.yml@${P}\", sha: \"${P}\"}]"
+assert_refused "${repo}" pr25 PF13 "must call exactly" "PR25 two entries" --candidate "${TF_BRANCH}" --commit "${TF_C}" --dry-run
+
+t_case "PR26: Local config refuses a reusable run"
+repo="$(tf_release_repo pr26)"
+tf_candidate "${repo}" patch
+e4="repos/acme/pr26/actions/workflows/candidate.yml/runs?head_sha=${TF_C}&event=push&per_page=100"
+tf_gh_edit "${e4}" '.workflow_runs[0].referenced_workflows = [{path: "nbari/release-flow/.github/workflows/candidate.yml@0123456789abcdef0123456789abcdef01234567", sha: "0123456789abcdef0123456789abcdef01234567"}]'
+assert_refused "${repo}" pr26 PF13 "declares no pipeline" "PR26 reusable run" --candidate "${TF_BRANCH}" --commit "${TF_C}" --dry-run
+jq '.pipeline = {repository: "nbari/release-flow", sha: "0123456789ab"}' "${repo}/.release-flow.json" > "${repo}/.release-flow.json.tmp"
+mv "${repo}/.release-flow.json.tmp" "${repo}/.release-flow.json"
+git -C "${repo}" add .release-flow.json
+git -C "${repo}" commit --quiet -m "short pipeline sha"
+assert_refused "${repo}" pr26 PF02 "invalid .release-flow.json at HEAD" "PR26 short sha" --candidate "${TF_BRANCH}" --commit "${TF_C}" --dry-run
+jq '.pipeline = {repository: "nbari/release-flow", sha: "0123456789abcdef0123456789abcdef01234567", extra: true}' "${repo}/.release-flow.json" > "${repo}/.release-flow.json.tmp"
+mv "${repo}/.release-flow.json.tmp" "${repo}/.release-flow.json"
+git -C "${repo}" add .release-flow.json
+git -C "${repo}" commit --quiet -m "unknown pipeline key"
+assert_refused "${repo}" pr26 PF02 "invalid .release-flow.json at HEAD" "PR26 unknown pipeline key" --candidate "${TF_BRANCH}" --commit "${TF_C}" --dry-run
+
 t_finish

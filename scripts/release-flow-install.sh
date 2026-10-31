@@ -94,6 +94,9 @@ if ! jq -e '
 fi
 bundle_version="$(jq -r '.bundle_version // empty' "${manifest}")"
 source_commit="$(jq -r '.source_commit // empty' "${manifest}")"
+workflow_mode="$(jq -r '.workflow_mode // "vendored"' "${manifest}")"
+[[ "${source_commit}" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid bundle source_commit' >&2; exit 1; }
+case "${workflow_mode}" in vendored|reusable) ;; *) echo 'Invalid bundle workflow_mode' >&2; exit 1 ;; esac
 
 # rows <file> <array-key>: "path<TAB>sha256<TAB>mode" per entry.
 rows() {
@@ -334,6 +337,8 @@ installed=0
 updated=0
 unchanged=0
 removed=0
+write_tmp=""
+trap '[[ -z "${write_tmp}" ]] || rm -f "${write_tmp}"' EXIT
 n=${#plan_action[@]}
 i=0
 while (( i < n )); do
@@ -342,10 +347,11 @@ while (( i < n )); do
   case "${action}" in
     install|update)
       mkdir -p "$(dirname "${dst}")"
-      tmp="${dst}.release-flow-tmp.$$"
-      cp "${plan_src[$i]}" "${tmp}"
-      chmod "0${plan_mode[$i]}" "${tmp}"
-      mv -f "${tmp}" "${dst}"
+      write_tmp="$(mktemp "${dst}.release-flow-tmp.XXXXXX")"
+      cp "${plan_src[$i]}" "${write_tmp}"
+      chmod "0${plan_mode[$i]}" "${write_tmp}"
+      mv -f "${write_tmp}" "${dst}"
+      write_tmp=""
       if [[ "${action}" == "install" ]]; then installed=$(( installed + 1 )); else updated=$(( updated + 1 )); fi
       ;;
     chmod)
@@ -364,13 +370,14 @@ while (( i < n )); do
 done
 
 files_json="$(printf '%s' "${selected}" | jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {path: .[0], sha256: .[1], mode: .[2]}) | sort_by(.path)')"
-lock_tmp="${lock_file}.tmp.$$"
+write_tmp="$(mktemp "${lock_file}.tmp.XXXXXX")"
 jq -n \
   --arg version "${bundle_version}" \
   --arg commit "${source_commit}" \
   --argjson files "${files_json}" \
-  '{schema_version: 1, bundle_version: $version, source_commit: $commit, files: $files}' > "${lock_tmp}"
-mv -f "${lock_tmp}" "${lock_file}"
+  '{schema_version: 1, bundle_version: $version, source_commit: $commit, files: $files}' > "${write_tmp}"
+mv -f "${write_tmp}" "${lock_file}"
+write_tmp=""
 
 printf 'bundle_version=%s\ninstalled=%d\nupdated=%d\nunchanged=%d\nremoved=%d\n' \
   "${bundle_version}" "${installed}" "${updated}" "${unchanged}" "${removed}"
@@ -386,6 +393,11 @@ for jf in justfile .justfile Justfile; do
   fi
 done
 echo "release-flow bundle ${bundle_version} installed into ${target_abs}" >&2
+if [[ "${workflow_mode}" == reusable ]]; then
+  echo "Workflows are pinned to nbari/release-flow@${source_commit}." >&2
+  echo "Set .release-flow.json pipeline.repository=nbari/release-flow, pipeline.sha=${source_commit} and promotion.required_job='candidate / Candidate OK'." >&2
+  echo 'Commit configuration and workflow pin upgrades together before preparing a candidate.' >&2
+fi
 if [[ "${has_import}" != "true" ]]; then
   echo "Next: add this line to the top of your root justfile (.justfile):" >&2
   echo "  ${import_line}" >&2

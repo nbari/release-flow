@@ -6,7 +6,7 @@ The fundamental invariant is: **the commit that is promoted and tagged is exactl
 
 The owner commits freely to `sandbox` and submits squash PRs to protected `develop`. Other contributors also submit PRs to `develop`. `main` accepts only an authorized release promotion, never ordinary development pushes. Temporary `release/*` branches contain an explicit version-bump commit based on an integration commit. Promotion must reject a changed target, stale candidate, non-fast-forward update, missing CI, or mismatched artifact manifest. Release automation must not rewrite `sandbox`.
 
-## Proposed state machine
+## Release state machine
 
 A release candidate progresses through `PREPARED` → `VALIDATING` → `VALIDATED` → `PROMOTED`. Its independent publishers then report their own states (`pending`, `running`, `succeeded`, `failed`) for GitHub Release, OCI images, documentation, and Helm. `PUBLISHED` is a derived state only when all required publication channels have succeeded. An optional downstream failure must not erase `PROMOTED` or force another version bump.
 
@@ -45,6 +45,8 @@ For immutable GitHub Releases, stage assets in a draft, verify the complete chec
 
 **Decide (PF01–PF20, read-only).** Tools; configuration (`repository`, `promotion`); an exclusive local lock; a fresh remote snapshot (with an already-promoted fast path); a production `release/X.Y.Z-<base12>` branch (test-only candidates are never promotable); the `--commit` pin equals the remote branch tip; production trailers; exactly one parent equal to `Release-Base-Commit`; the candidate edits no release tooling (`.github/`, `.justfiles/`, `scripts/`, the config, the adapter, bundle-locked paths), after which the configuration at `C` is authoritative; the version is above every released tag and unused (an unpublished local tag is reused only when it carries exactly this candidate's evidence); `develop` still equals the base; `main` fast-forwards to `C`; the `candidate.yml` push run for `C` on that branch and repository succeeded and its latest attempt's `Candidate OK` job succeeded; the non-expired `candidate-<C>-<attempt>` artifact downloads and verifies; the durable candidate record equals it; every stored blob is present and intact (a missing blob is reported as unrecoverable, never rebuilt); signing is ready; and the server rulesets protect `main`, `develop` and release tags, with a dry-run push accepted.
 
+When `.release-flow.json` declares `pipeline`, PF13 also requires the candidate run to have called exactly `<pipeline.repository>/.github/workflows/candidate.yml@<pipeline.sha>`; without it, the run must call no reusable workflow.
+
 **Act.** `T1` creates (or reuses) the signed annotated tag whose message carries strict trailers (`Release-Project`, `-Repository`, `-Version`, `-Commit`, `-Base-Commit`, `-Candidate-Branch`, `-Candidate-Run`, `-Candidate-Run-Attempt`, `-Manifest-SHA256`, `-SHA256SUMS-SHA256`, `-Storage`). `T2` re-reads the remote and stops if anything moved. `T3` is the only write: one `git push --atomic` of `C:main`, `C:develop` and the tag, fast-forward and create-only, never forced.
 
 **Reconcile.** `T4` always re-reads the remote (with backoff), whatever the push reported:
@@ -65,7 +67,7 @@ For immutable GitHub Releases, stage assets in a draft, verify the complete chec
 
 **Storage** (`scripts/storage/`, `file:///` or `s3://` with conditional writes) is content-addressed and create-only: `blobs/sha256/..` (artifacts, `manifest.json`, `SHA256SUMS`), `candidates/<P>/<C>/<run>-<attempt>.json` (written only by the `candidate.yml` `retain` job), `releases/<P>/<V>.json` (the release binding), the append-only `ledger/` of publication events, `locks/` and `latest` pointers updated by compare-and-swap. Every record has an exact JSON schema (`scripts/lib/schema.sh`); nothing is ever sourced as shell. Identical rewrites succeed, different ones conflict.
 
-**Publishers** (`.github/workflows/release.yml`, one job per channel, no `needs:`) each run `scripts/publication/publish.sh`: resolve the signed tag (strict trailers, trusted signature, `C` contained in `main`), materialize and verify the stored bytes against the pinned manifest digest, take the channel lock, record `running`, observe the destination, apply only what is missing, observe again, record `succeeded` or `failed` with an error class. Channels: GitHub Release (draft → exact asset inventory → publish, never clobber), OCI (push by digest, immutable version tags, forward-only `latest` through a stored pointer and repair), crates.io (repackage at `C`, publish only byte-identical bytes, confirm the index checksum), docs and Helm (create-only objects, CAS-updated pointer/index that only grows).
+**Publishers** (`.github/workflows/release.yml`, a read-only publisher-selection job and one independent job per configured channel) each run `scripts/publication/publish.sh`: resolve the signed tag (strict trailers, trusted signature, `C` contained in `main`), materialize and verify the stored bytes against the pinned manifest digest, take the channel lock, record `running`, observe the destination, apply only what is missing, observe again, record `succeeded` or `failed` with an error class. Channels: GitHub Release (draft → exact asset inventory → publish, never clobber), OCI (push by digest, immutable version tags, forward-only `latest` through a stored pointer and repair), crates.io (repackage at `C`, publish only byte-identical bytes, confirm the index checksum), docs and Helm (create-only objects, CAS-updated pointer/index that only grows).
 
 **Release states** (`just release-status X.Y.Z [--json]`):
 
@@ -82,3 +84,39 @@ PREPARED ─► VALIDATING ─► VALIDATED ────────────
 Optional channel failures never demote `PROMOTED`. **Recovery** is `just release-retry X.Y.Z <channel>`: it dispatches `release.yml` with current approved publisher code (default ref `promotion.publisher_ref`), or runs it from the current checkout with `--local`; the identity still comes only from the original signed tag and the bytes only from storage.
 
 The nine required failure tests above map to PR03, PR06, PR14, PB03, PB08, PR15/PR16, PR09/PB05, PB09 and PR10/PB06 in `tests/pipeline/`.
+
+## Public interfaces and runtime identity
+
+The root composite `action.yml` performs static, read-only validation using the
+same strict config schema and project-path checks as the candidate guard. It
+never runs the consumer adapter. A protocol declaration is data, not proof of
+adapter behavior; candidate tests and inventory/package verification provide that
+proof. A consumer path cannot escape `GITHUB_WORKSPACE`, including via symlinks.
+Trusted Action code comes only from `GITHUB_ACTION_PATH`.
+
+`candidate.yml` and `release.yml` expose `workflow_call`. Their runtime checkout
+uses `job.workflow_repository` and `job.workflow_sha`, then `pipeline-pin.sh`
+requires checkout HEAD to equal the workflow SHA and a cross-repository call to
+use a full-SHA reference matching the consumer's `pipeline` configuration. Missing
+context fails without fallback. `github.sha` independently selects the consumer
+candidate checkout. Manifest `build_info.release_flow` records the runtime
+repository/SHA; promotion also checks GitHub's `referenced_workflows` evidence.
+These workflow identity fields currently require github.com.
+
+The read-only publisher plan validates version/configuration/selection before any
+publisher environment is entered. Each channel depends only on that plan, never
+on a sibling publisher. A final report requires exactly the selected jobs to
+succeed, with other jobs skipped. Unknown or explicitly unconfigured selections
+fail closed. Publication status still derives required success from the durable
+per-channel ledger, never from skipped GitHub jobs.
+
+The bundle supports thin pinned callers (`--workflow-mode reusable`) and the
+existing vendored workflows. Both retain the same local Just module and complete
+operations scripts. Reusable bundle generation requires clean committed runtime
+sources and records version, source SHA, workflow mode and file checksums. The
+installer plans conflicts before writes and does not overwrite consumer config.
+Upgrades change managed files and the consumer pin together in a reviewed commit.
+
+See [MARKETPLACE.md](MARKETPLACE.md) for owner-only listing activation, immutable
+version policy and exact metadata requirements; [VERIFICATION.md](VERIFICATION.md)
+records local and actual GitHub execution evidence.
