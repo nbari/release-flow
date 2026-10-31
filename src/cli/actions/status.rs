@@ -79,9 +79,10 @@ pub fn run(as_json: bool) -> Result<ExitCode> {
                     "(different SHA)"
                 };
                 let short_sha = run.head_sha.get(..7).unwrap_or(&run.head_sha);
+                let branch_name = run.head_branch.as_deref().unwrap_or("-");
                 println!(
                     "  {} / {} ({}) {} {} {}",
-                    run.name, run.head_branch, short_sha, run.status, conclusion, sha_match
+                    run.name, branch_name, short_sha, run.status, conclusion, sha_match
                 );
             }
         }

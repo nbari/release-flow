@@ -126,9 +126,14 @@ if git rev-parse --verify "refs/heads/${base_branch}" >/dev/null 2>&1; then
 fi
 
 # 5. Remote state check
-remote_tags="$(git ls-remote --tags --refs "${cfg_remote}" 2>/dev/null || true)"
-remote_heads="$(git ls-remote --heads "${cfg_remote}" 2>/dev/null || true)"
-
+if ! remote_tags="$(git ls-remote --tags --refs "${cfg_remote}")"; then
+  echo "Failed to query remote tags from '${cfg_remote}'" >&2
+  exit 1
+fi
+if ! remote_heads="$(git ls-remote --heads "${cfg_remote}")"; then
+  echo "Failed to query remote heads from '${cfg_remote}'" >&2
+  exit 1
+fi
 # 6. Worktree setup with cleanup traps
 wt=""
 cleanup() {
@@ -177,18 +182,18 @@ next_ver=""
 IFS='.' read -r cur_major cur_minor cur_patch <<< "${current_ver}"
 
 if [[ "${bump_token}" == "patch" ]]; then
-  next_ver="${cur_major}.${cur_minor}.$((cur_patch + 1))"
+  next_ver="${cur_major}.${cur_minor}.$(( 10#${cur_patch} + 1 ))"
 elif [[ "${bump_token}" == "minor" ]]; then
-  next_ver="${cur_major}.$((cur_minor + 1)).0"
+  next_ver="${cur_major}.$(( 10#${cur_minor} + 1 )).0"
 elif [[ "${bump_token}" == "major" ]]; then
-  next_ver="$((cur_major + 1)).0.0"
+  next_ver="$(( 10#${cur_major} + 1 )).0.0"
 else
   next_ver="${bump_token}"
   # Ensure explicit version is strictly greater
   IFS='.' read -r exp_major exp_minor exp_patch <<< "${next_ver}"
-  if (( exp_major < cur_major )) || \
-     (( exp_major == cur_major && exp_minor < cur_minor )) || \
-     (( exp_major == cur_major && exp_minor == cur_minor && exp_patch <= cur_patch )); then
+  if (( 10#${exp_major} < 10#${cur_major} )) || \
+     (( 10#${exp_major} == 10#${cur_major} && 10#${exp_minor} < 10#${cur_minor} )) || \
+     (( 10#${exp_major} == 10#${cur_major} && 10#${exp_minor} == 10#${cur_minor} && 10#${exp_patch} <= 10#${cur_patch} )); then
     echo "Explicit version ${next_ver} must be strictly greater than current version ${current_ver}" >&2
     exit 1
   fi
@@ -206,9 +211,9 @@ for existing_tag in ${all_tags}; do
   if [[ "${clean_tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     IFS='.' read -r t_maj t_min t_pat <<< "${clean_tag}"
     IFS='.' read -r n_maj n_min n_pat <<< "${next_ver}"
-    if (( n_maj < t_maj )) || \
-       (( n_maj == t_maj && n_min < t_min )) || \
-       (( n_maj == t_maj && n_min == t_min && n_pat <= t_pat )); then
+    if (( 10#${n_maj} < 10#${t_maj} )) || \
+       (( 10#${n_maj} == 10#${t_maj} && 10#${n_min} < 10#${t_min} )) || \
+       (( 10#${n_maj} == 10#${t_maj} && 10#${n_min} == 10#${t_min} && 10#${n_pat} <= 10#${t_pat} )); then
       echo "Version collision: next version ${next_ver} is not strictly greater than existing tag ${existing_tag}" >&2
       exit 1
     fi

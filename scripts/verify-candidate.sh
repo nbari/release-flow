@@ -219,7 +219,7 @@ if [[ "${sums_names}" != "${manifest_artifacts}" ]]; then
   fail "SHA256SUMS entries do not match manifest artifact names"
 fi
 
-while IFS= read -r line; do
+while IFS= read -r line || [[ -n "${line}" ]]; do
   [[ -n "${line}" ]] || continue
   if [[ ! "${line}" =~ ^[0-9a-f]{64}[[:space:]]{2}[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
     fail "Malformed line in SHA256SUMS: ${line}"

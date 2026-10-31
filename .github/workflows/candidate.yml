@@ -68,7 +68,9 @@ jobs:
 
       - name: Release-pipeline self-tests
         run: |
-          bash tests/pipeline/run.sh
+          if [[ -f tests/pipeline/run.sh ]]; then
+            bash tests/pipeline/run.sh
+          fi
 
   package:
     name: Build and package candidate
@@ -189,7 +191,7 @@ jobs:
 
   report:
     name: Candidate OK
-    if: always()
+    if: always() && github.event.deleted != true
     needs: [guard, test, package, verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 5

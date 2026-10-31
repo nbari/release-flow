@@ -67,7 +67,7 @@ pub struct BranchRelationships {
 pub struct WorkflowRun {
     pub name: String,
     #[serde(rename = "head_branch", alias = "headBranch")]
-    pub head_branch: String,
+    pub head_branch: Option<String>,
     #[serde(rename = "head_sha", alias = "headSha")]
     pub head_sha: String,
     pub status: String,

@@ -315,7 +315,7 @@ exit 1
     let (success, stdout, _) = repo.run_cli(&["check"], Some(&mock_bin_dir));
     assert!(!success, "check with different SHA must fail: {stdout}");
     assert!(stdout.contains("BLOCKED"));
-    assert!(stdout.contains("No GitHub Actions workflow runs found for exact commit"));
+    assert!(stdout.contains("No CI or Candidate workflow runs found for exact commit"));
 
     // 3. gh command failure (e.g. unauthenticated or offline) -> should fail closed with UNKNOWN
     let gh_error = r#"#!/usr/bin/env bash

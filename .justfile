@@ -50,8 +50,8 @@ sandbox-squash message="" base="origin/develop": check-clean
     base="{{ base }}"
     current_branch="$(git branch --show-current)"
 
-    if [[ "${current_branch}" == "develop" || "${current_branch}" == "main" ]]; then
-        echo "❌ Refusing to rewrite ${current_branch}. Run from a disposable branch." >&2
+    if [[ "${current_branch}" == "develop" || "${current_branch}" == "main" || "${current_branch}" == release/* ]]; then
+        echo "❌ Refusing to rewrite ${current_branch}. Run from a disposable branch (e.g. sandbox)." >&2
         exit 1
     fi
 

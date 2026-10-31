@@ -27,13 +27,17 @@ resolve_bin() {
   if [[ -n "${RELEASE_FLOW_CARGO_BIN:-}" ]]; then
     printf '%s' "${RELEASE_FLOW_CARGO_BIN}"
   else
-    local bin
-    bin="$(printf '%s' "${meta}" | jq -er --arg p "${pkg}" '.packages[] | select(.name == $p) | .targets[] | select(.kind[] == "bin") | .name' | head -n 1)"
-    if [[ -z "${bin}" ]]; then
+    local bins bin_count
+    bins="$(printf '%s' "${meta}" | jq -er --arg p "${pkg}" '[.packages[] | select(.name == $p) | .targets[] | select(.kind[] == "bin") | .name]')"
+    bin_count="$(printf '%s' "${bins}" | jq 'length')"
+    if [[ "${bin_count}" -eq 0 ]]; then
       echo "No binary target found for package ${pkg}" >&2
       exit 1
+    elif [[ "${bin_count}" -gt 1 ]]; then
+      echo "Ambiguous binary targets for package ${pkg}: specify RELEASE_FLOW_CARGO_BIN" >&2
+      exit 1
     fi
-    printf '%s' "${bin}"
+    printf '%s' "${bins}" | jq -er '.[0]'
   fi
 }
 
@@ -64,15 +68,22 @@ case "${subcommand}" in
 
     pkg="$(resolve_package)"
     manifest_path="$(cargo metadata --no-deps --format-version 1 | jq -er --arg p "${pkg}" '.packages[] | select(.name == $p) | .manifest_path')"
-    rel_manifest="$(python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1]))' "${manifest_path}")"
+    rel_manifest="${manifest_path#"$PWD"/}"
 
-    # Check for workspace inheritance
-    if grep -Eq '^[[:space:]]*version[[:space:]]*=[[:space:]]*\{[[:space:]]*workspace[[:space:]]*=[[:space:]]*true' "${rel_manifest}" || \
-       grep -Eq '^[[:space:]]*version\.workspace[[:space:]]*=[[:space:]]*true' "${rel_manifest}"; then
+    # Check for workspace inheritance in [package] section only
+    is_workspace_inherited="$(awk '
+      BEGIN { in_pkg = 0; inherited = 0 }
+      /^\[package\]/ { in_pkg = 1; next }
+      /^\[/ { in_pkg = 0; next }
+      in_pkg && /^[[:space:]]*version(\.workspace|[[:space:]]*=[[:space:]]*\{[[:space:]]*workspace)[[:space:]]*=[[:space:]]*true/ {
+        inherited = 1;
+      }
+      END { print inherited }
+    ' "${rel_manifest}")"
+    if [[ "${is_workspace_inherited}" -eq 1 ]]; then
       echo "Workspace-inherited versioning not directly supported for single-package edit" >&2
       exit 1
     fi
-
     awk -v ver="${target_version}" '
       BEGIN { in_pkg = 0; replaced = 0 }
       /^\[package\]/ { in_pkg = 1; print; next }
@@ -184,12 +195,15 @@ EOF
       mkdir -p "${outdir}"
     fi
 
+    target_dir="$(cargo metadata --no-deps --format-version 1 | jq -er '.target_directory')"
+    target_dir_rel="${target_dir#"$PWD"/}"
+
     if [[ -n "${RELEASE_FLOW_CARGO_TARGET:-}" ]]; then
-      cargo build --release --locked --target "${RELEASE_FLOW_CARGO_TARGET}"
-      bin_path="target/${RELEASE_FLOW_CARGO_TARGET}/release/${bin_name}"
+      cargo build --release --locked --package "${pkg}" --bin "${bin_name}" --target "${RELEASE_FLOW_CARGO_TARGET}"
+      bin_path="${target_dir_rel}/${RELEASE_FLOW_CARGO_TARGET}/release/${bin_name}"
     else
-      cargo build --release --locked
-      bin_path="target/release/${bin_name}"
+      cargo build --release --locked --package "${pkg}" --bin "${bin_name}"
+      bin_path="${target_dir_rel}/release/${bin_name}"
     fi
 
     stage_dir="$(mktemp -d)"

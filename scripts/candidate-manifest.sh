@@ -101,7 +101,8 @@ if [[ -n "${dup_check}" ]]; then
 fi
 
 # Check validity of artifact names
-for name in ${inv_names}; do
+while IFS= read -r name || [[ -n "${name}" ]]; do
+  [[ -n "${name}" ]] || continue
   if [[ "${name}" == "manifest.json" || "${name}" == "SHA256SUMS" ]]; then
     echo "Reserved artifact name not allowed: ${name}" >&2
     exit 1
@@ -110,7 +111,7 @@ for name in ${inv_names}; do
     echo "Invalid artifact name: ${name}" >&2
     exit 1
   fi
-done
+done <<< "${inv_names}"
 
 # Compare inventory names against files present in directory
 dir_files="$(find "${dir}" -maxdepth 1 -type f -exec basename {} \; | sort)"
@@ -135,7 +136,8 @@ tools_json="$(jq '.build_info.tools // {}' "${inventory}")"
 # Compute sizes and digests
 artifacts_json="[]"
 sums_file="${dir}/SHA256SUMS"
-: > "${sums_file}"
+sums_tmp="${dir}/.SHA256SUMS.tmp"
+: > "${sums_tmp}"
 
 while IFS= read -r name; do
   [[ -n "${name}" ]] || continue
@@ -144,7 +146,7 @@ while IFS= read -r name; do
   file_size="$(wc -c < "${file_path}" | tr -d ' ')"
   file_sha="$(sha256sum "${file_path}" | awk '{print $1}')"
 
-  printf '%s  %s\n' "${file_sha}" "${name}" >> "${sums_file}"
+  printf '%s  %s\n' "${file_sha}" "${name}" >> "${sums_tmp}"
 
   entry="$(jq -n --arg name "${name}" --arg target "${target}" \
     --argjson size "${file_size}" --arg sha256 "${file_sha}" \
@@ -152,8 +154,9 @@ while IFS= read -r name; do
   artifacts_json="$(jq --argjson e "${entry}" '. += [$e]' <<< "${artifacts_json}")"
 done <<< "${inv_sorted}"
 
-# Sort SHA256SUMS deterministically
-sort -k2,2 "${sums_file}" -o "${sums_file}"
+# Sort SHA256SUMS deterministically and move atomically
+sort -k2,2 "${sums_tmp}" > "${sums_file}"
+rm -f "${sums_tmp}"
 
 # Build manifest.json in exact C4 key order
 manifest_path="${dir}/manifest.json"

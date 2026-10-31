@@ -147,12 +147,13 @@ if [[ "${expected_mode}" == "production" ]]; then
     echo "Production candidate base branch '${trailer_base_branch}' does not match config production_base '${config_prod_base}'" >&2
     exit 1
   fi
-  # Verify ancestry if remote tracking ref is available
-  if git rev-parse --verify "refs/remotes/${config_remote}/${config_prod_base}" >/dev/null 2>&1; then
-    if ! git merge-base --is-ancestor "${trailer_base_commit}" "refs/remotes/${config_remote}/${config_prod_base}"; then
-      echo "Base commit ${trailer_base_commit} is not an ancestor of ${config_remote}/${config_prod_base}" >&2
-      exit 1
-    fi
+  if ! git rev-parse --verify "refs/remotes/${config_remote}/${config_prod_base}" >/dev/null 2>&1; then
+    echo "Remote tracking ref 'refs/remotes/${config_remote}/${config_prod_base}' not found" >&2
+    exit 1
+  fi
+  if ! git merge-base --is-ancestor "${trailer_base_commit}" "refs/remotes/${config_remote}/${config_prod_base}"; then
+    echo "Base commit ${trailer_base_commit} is not an ancestor of ${config_remote}/${config_prod_base}" >&2
+    exit 1
   fi
 else
   # Test-only mode: warn if base is not an ancestor

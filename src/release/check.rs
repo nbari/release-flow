@@ -1,4 +1,4 @@
-use crate::repository::Snapshot;
+use crate::repository::{Snapshot, WorkflowRun};
 use serde::{Deserialize, Serialize};
 
 /// Verdict of an individual release readiness check.
@@ -219,11 +219,36 @@ fn evaluate_tag_consistency(snapshot: &Snapshot) -> CheckFinding {
 }
 
 fn evaluate_remote_invariants(snapshot: &Snapshot) -> Vec<CheckFinding> {
-    vec![
+    let mut findings = vec![
         evaluate_upstream_sync(snapshot),
         evaluate_remote_tags(snapshot),
         evaluate_remote_ci(snapshot),
-    ]
+    ];
+    if let Some(div) = evaluate_branch_divergence(snapshot) {
+        findings.push(div);
+    }
+    findings
+}
+
+fn evaluate_branch_divergence(snapshot: &Snapshot) -> Option<CheckFinding> {
+    snapshot.branch_relationships.develop_vs_main.map(|ab| {
+        if ab.behind > 0 {
+            CheckFinding {
+                id: "branch_divergence".to_string(),
+                verdict: Verdict::Fail,
+                message: format!(
+                    "Branch 'develop' is behind 'main' by {} commit(s); promotion cannot fast-forward",
+                    ab.behind
+                ),
+            }
+        } else {
+            CheckFinding {
+                id: "branch_divergence".to_string(),
+                verdict: Verdict::Pass,
+                message: "Branch 'develop' has integrated 'main' (fast-forward promotion safe)".to_string(),
+            }
+        }
+    })
 }
 
 fn evaluate_remote_tags(snapshot: &Snapshot) -> CheckFinding {
@@ -344,13 +369,17 @@ fn evaluate_remote_ci(snapshot: &Snapshot) -> CheckFinding {
             message: format!("Remote CI status could not be established: {err_msg}"),
         }
     } else {
-        let matching = snapshot.matching_actions();
+        let all_matching = snapshot.matching_actions();
+        let matching: Vec<&WorkflowRun> = all_matching
+            .into_iter()
+            .filter(|r| r.name == "CI" || r.name == "Candidate")
+            .collect();
         if matching.is_empty() {
             CheckFinding {
                 id: "remote_ci_exact_sha".to_string(),
                 verdict: Verdict::Fail,
                 message: format!(
-                    "No GitHub Actions workflow runs found for exact commit {}",
+                    "No CI or Candidate workflow runs found for exact commit {}",
                     snapshot.commit
                 ),
             }
@@ -521,7 +550,7 @@ mod tests {
         let mut snapshot = base_snapshot();
         snapshot.actions = Some(vec![WorkflowRun {
             name: "CI".into(),
-            head_branch: "develop".into(),
+            head_branch: Some("develop".into()),
             head_sha: "1111111111111111111111111111111111111111".into(),
             status: "completed".into(),
             conclusion: Some("success".into()),
@@ -538,7 +567,7 @@ mod tests {
         let mut snapshot = base_snapshot();
         snapshot.actions = Some(vec![WorkflowRun {
             name: "CI".into(),
-            head_branch: "develop".into(),
+            head_branch: Some("develop".into()),
             head_sha: "9999999999999999999999999999999999999999".into(),
             status: "completed".into(),
             conclusion: Some("success".into()),
@@ -574,7 +603,7 @@ mod tests {
         let mut snapshot = base_snapshot();
         snapshot.actions = Some(vec![WorkflowRun {
             name: "CI".into(),
-            head_branch: "develop".into(),
+            head_branch: Some("develop".into()),
             head_sha: "1111111111111111111111111111111111111111".into(),
             status: "in_progress".into(),
             conclusion: None,
