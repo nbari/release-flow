@@ -1,6 +1,6 @@
 [package]
 name = "release-flow"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 authors = ["Nicolas Embriz <nbari@tequila.io>"]
 description = "Read-only CLI for inspecting Git repositories, release readiness, version plans, and GitHub Actions"
