@@ -1,0 +1,68 @@
+[package]
+name = "release-flow"
+version = "0.1.2"
+edition = "2024"
+authors = ["Nicolas Embriz <nbari@tequila.io>"]
+description = "Read-only CLI for inspecting Git repositories, release readiness, version plans, and GitHub Actions"
+license = "BSD-3-Clause"
+repository = "https://github.com/nbari/release-flow"
+readme = "README.md"
+keywords = ["release", "ci", "git", "cli", "semver"]
+categories = ["command-line-utilities", "development-tools"]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/release-flow", dest = "/usr/bin/release-flow", mode = "0755" },
+]
+
+[package.metadata.deb]
+assets = [
+  ["target/release/release-flow", "/usr/bin/release-flow", "755"],
+]
+depends = ""
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["std", "color"] }
+semver = { version = "1", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[[bin]]
+name = "release-flow"
+path = "src/bin/release-flow.rs"
+
+[build-dependencies]
+built = { version = "0.8.1", features = ["git2"] }
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+# Allow unstable/opinionated lints (lower priority so individual lints can override)
+nursery = { level = "allow", priority = -1 }
+
+# Enforce pedantic lints
+pedantic = "deny"
+
+# Core lint groups
+all = "deny"
+correctness = "deny"
+suspicious = "deny"
+perf = "deny"
+complexity = "deny"
+
+# Safety-critical lints
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+await_holding_lock = "deny"
+
+# Performance + memory reliability
+needless_borrow = "deny"
+needless_collect = "deny"
+large_stack_arrays = "deny"

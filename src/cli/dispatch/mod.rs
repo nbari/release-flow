@@ -1,0 +1,74 @@
+use crate::{cli::actions::Action, release::version::Bump};
+use anyhow::{Context, Result, bail};
+use clap::ArgMatches;
+
+/// Resolve clap matches into a typed action without performing IO.
+///
+/// # Errors
+///
+/// Returns an error if an unsupported or missing command is encountered.
+pub fn handler(matches: &ArgMatches) -> Result<Action> {
+    match matches.subcommand() {
+        Some(("status", args)) => Ok(Action::Status {
+            json: args.get_flag("json"),
+        }),
+        Some(("plan", args)) => {
+            let bump = args
+                .get_one::<String>("bump")
+                .context("missing bump type")?;
+            let bump = match bump.as_str() {
+                "patch" => Bump::Patch,
+                "minor" => Bump::Minor,
+                "major" => Bump::Major,
+                _ => bail!("unsupported bump: {bump}"),
+            };
+            Ok(Action::Plan {
+                bump,
+                json: args.get_flag("json"),
+            })
+        }
+        Some(("check", args)) => Ok(Action::Check {
+            json: args.get_flag("json"),
+            local_only: args.get_flag("local-only"),
+        }),
+        _ => bail!("missing or unsupported command"),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::handler;
+    use crate::{
+        cli::{actions::Action, commands},
+        release::version::Bump,
+    };
+
+    #[test]
+    fn maps_plan_to_typed_action() {
+        let matches = commands::new()
+            .try_get_matches_from(["release-flow", "plan", "minor", "--json"])
+            .expect("valid CLI");
+        assert!(matches!(
+            handler(&matches).expect("valid action"),
+            Action::Plan {
+                bump: Bump::Minor,
+                json: true
+            }
+        ));
+    }
+
+    #[test]
+    fn maps_check_to_typed_action() {
+        let matches = commands::new()
+            .try_get_matches_from(["release-flow", "check", "--json", "--local-only"])
+            .expect("valid CLI");
+        assert!(matches!(
+            handler(&matches).expect("valid action"),
+            Action::Check {
+                json: true,
+                local_only: true,
+            }
+        ));
+    }
+}
