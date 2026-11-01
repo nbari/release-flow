@@ -117,13 +117,14 @@ class ReleaseContract(unittest.TestCase):
 
     def test_missing_or_unexpected_artifact_fails_before_inspection(self):
         version = adapter("version").stdout.strip()
+        inventory = json.loads(adapter("inventory", version).stdout)
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
             with self.assertRaisesRegex(ValueError, "Missing or unexpected"):
-                packages.verify_packages("x86_64-unknown-linux-musl", version, out)
+                packages.verify_packages("x86_64-unknown-linux-musl", version, out, inventory)
             (out / "unexpected.tar.gz").write_bytes(b"not a release artifact")
             with self.assertRaisesRegex(ValueError, "Missing or unexpected"):
-                packages.verify_packages("x86_64-unknown-linux-musl", version, out)
+                packages.verify_packages("x86_64-unknown-linux-musl", version, out, inventory)
 
     def test_unconfigured_publishers_fail_closed(self):
         version = adapter("version").stdout.strip()

@@ -3,6 +3,7 @@
 import io
 import json
 from pathlib import Path, PurePosixPath
+import shutil
 import struct
 import subprocess
 import sys
@@ -82,11 +83,21 @@ def rpm_binary(data):
     return binaries[0]
 
 
-def verify_packages(target, version, directory):
-    root = Path(__file__).resolve().parents[1]
-    inventory = json.loads(subprocess.check_output(
-        ["bash", str(root / "tools/adapter.sh"), "inventory", version], cwd=root, text=True))
+def inspect(command):
+    result = subprocess.run(command, capture_output=True)
+    if result.returncode:
+        description = result.stderr.decode("utf-8", errors="replace").strip()
+        if result.stdout:
+            description += " stdout_bytes=" + str(len(result.stdout)) + " prefix=" + repr(result.stdout[:100])
+        raise ValueError("Inspection failed: " + str(shutil.which(command[0])) +
+                         " status=" + str(result.returncode) + " " + description)
+    return result.stdout
+
+
+def verify_packages(target, version, directory, inventory):
     expected = {a["name"] for a in inventory["artifacts"] if a["target"] == target}
+    require(all(name.startswith("release-flow-" + version + "-") for name in expected),
+            "Inventory version differs from the requested package version")
     observed = {p.name for p in directory.iterdir()}
     require(expected and observed == expected, "Missing or unexpected package files")
     cpu = target.split("-")[0]
@@ -103,15 +114,18 @@ def verify_packages(target, version, directory):
                 require(len(entries) == 1, "Expected one Windows executable in ZIP")
                 binary = archive.read(entries[0])
         elif name.endswith(".deb"):
-            arch = subprocess.check_output(["dpkg-deb", "--field", str(path), "Architecture"], text=True).strip()
+            arch = inspect(["dpkg-deb", "--field", str(path), "Architecture"]).decode().strip()
             require(arch == {"x86_64": "amd64", "aarch64": "arm64"}[cpu], "Incorrect Debian architecture")
-            payload = subprocess.check_output(["dpkg-deb", "--fsys-tarfile", str(path)])
+            if "-gnu" in target:
+                dependencies = inspect(["dpkg-deb", "--field", str(path), "Depends"]).decode()
+                require("libc6" in dependencies, "GNU Debian package lacks libc runtime dependencies")
+            payload = inspect(["dpkg-deb", "--fsys-tarfile", str(path)])
             with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
                 binary = tar_binary(archive, executable)
         elif name.endswith(".rpm"):
-            arch = subprocess.check_output(["rpm", "-qp", "--queryformat", "%{ARCH}", str(path)], text=True).strip()
+            arch = inspect(["rpm", "-qp", "--queryformat", "%{ARCH}", str(path)]).decode().strip()
             require(arch == {"x86_64": "x86_64", "aarch64": "aarch64"}[cpu], "Incorrect RPM architecture")
-            binary = rpm_binary(subprocess.check_output(["rpm2cpio", str(path)]))
+            binary = rpm_binary(inspect(["rpm2cpio", str(path)]))
         else:
             raise ValueError("Unexpected package format: " + name)
         verify_binary(binary, target)
@@ -121,4 +135,4 @@ def verify_packages(target, version, directory):
 if __name__ == "__main__":
     if len(sys.argv) != 4:
         raise SystemExit("Usage: verify-packages.py TARGET VERSION DIRECTORY")
-    verify_packages(sys.argv[1], sys.argv[2], Path(sys.argv[3]))
+    verify_packages(sys.argv[1], sys.argv[2], Path(sys.argv[3]), json.load(sys.stdin))

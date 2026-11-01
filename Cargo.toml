@@ -20,7 +20,7 @@ assets = [
 assets = [
   ["target/release/release-flow", "/usr/bin/release-flow", "755"],
 ]
-depends = ""
+depends = "$auto"
 
 [dependencies]
 anyhow = "1"

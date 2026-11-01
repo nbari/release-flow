@@ -64,8 +64,12 @@ case "$command" in
       sudo apt-get update -y >&2
       sudo apt-get install -y rpm rpm2cpio >&2
     fi
+    if [[ "$selected" == *linux* ]]; then
+      rpm --version >&2
+      command -v rpm2cpio >&2
+    fi
     bash "$cargo_adapter" package "$version" "$out"
-    python3 tools/verify-packages.py "$selected" "$version" "$out"
+    bash "$root/tools/adapter.sh" inventory "$version" | python3 tools/verify-packages.py "$selected" "$version" "$out"
     ;;
   *) echo 'Expected version, set-version, verify, targets, inventory or package' >&2; exit 2 ;;
 esac
