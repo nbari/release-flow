@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "kind": "release-binding",
+  "project": "release-flow",
+  "repository": "nbari/release-flow",
+  "version": "0.1.3",
+  "candidate_commit": "b387ca92ae59401394ab73a8b97947184efa7289",
+  "base_commit": "a8842b8327a3781f26b14a238a2dabf397999b53",
+  "candidate_branch": "release/0.1.3-a8842b8327a3",
+  "run_id": "41321803962",
+  "run_attempt": 1,
+  "manifest_sha256": "5dd52a5ae5ef43b6580838a035f11f4476cf2ff49f73820681f0348737d74c84",
+  "sha256sums_sha256": "2ca07df88a918e77e4adf7506ea5503e4df3a9c507255cc9eaa57cb56439b690",
+  "storage": "github://nbari/release-flow",
+  "tag": "0.1.3",
+  "tag_object": "677d04d6e9b7603f5411a0cfeac42fc4bf080781",
+  "storage_uri": "github://nbari/release-flow"
+}
