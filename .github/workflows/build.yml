@@ -31,3 +31,6 @@ jobs:
         run: |
           rustup target add "$TARGET"
           cargo build --release --locked --target "$TARGET"
+          binary="./target/$TARGET/release/release-flow"
+          case "$TARGET" in *windows*) binary="$binary.exe" ;; esac
+          "$binary" --version

@@ -75,7 +75,9 @@ cargo test --locked --workspace --all-features
 cargo build --release --locked
 ```
 
-`just check` runs the same gates. Unit tests cover typed command handling, Git
+`just check` runs these gates plus the consumer's release contracts (Bash, jq and
+Python 3 are needed for those tooling checks). Cargo tests remain independent.
+Unit tests cover typed command handling, Git
 snapshots, SemVer planning and readiness. CLI integration tests create isolated
 Git fixtures and mock remote Actions evidence. They need no release engine.
 

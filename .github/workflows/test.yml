@@ -39,15 +39,16 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked --workspace --all-features
       - run: python3 tests/release_contract.py
-      - run: cargo build --release --locked
       - name: CLI smoke tests
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ./target/release/release-flow --version
-          ./target/release/release-flow status --json | jq -e 'type=="object"'
-          ./target/release/release-flow plan patch --json | jq -e '.bump=="patch" and .proposed_version!=null'
+          # Cargo builds this executable for the Rust CLI integration tests.
+          # Release compilation runs once per platform in build.yml.
+          ./target/debug/release-flow --version
+          ./target/debug/release-flow status --json | jq -e 'type=="object"'
+          ./target/debug/release-flow plan patch --json | jq -e '.bump=="patch" and .proposed_version!=null'
           result=0
-          ./target/release/release-flow check --local-only --json > "$RUNNER_TEMP/readiness.json" || result=$?
+          ./target/debug/release-flow check --local-only --json > "$RUNNER_TEMP/readiness.json" || result=$?
           test "$result" -le 1
           jq -e '(.eligible|type)=="boolean"' "$RUNNER_TEMP/readiness.json"
