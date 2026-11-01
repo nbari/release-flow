@@ -11,7 +11,8 @@ script/toolchain, BSD license and independent Rust CI. The crate/binary name
 release-flow and Cargo version 0.1.2 are preserved. crates.io version 0.1.0 and
 all historic published versions are untouched. No new package is published.
 
-All existing Git commits remain ancestors or immutable referenced objects.
+Historical releases remain reachable through immutable tags. The original
+pre-reset snapshot is also preserved in verified offline Git bundles.
 Signed version tags, public releases, retained assets and the separate protected
 release-flow-storage history stay in this repository. No old tags, storage
 branch or release binding is transplanted into nbari/release. Deleting the
@@ -26,38 +27,48 @@ release adoption now uses a guarded main promotion policy; see RELEASES.md.
 The Rust-only snapshot at `58729d30847709553f8e114251adc2256cb812be` was
 reproduced byte-for-byte as the signed, zero-parent commit
 `c2cde54ad18425994c9aa741f850e37296adc5d1` (`Initial Rust CLI`). The original
-22-commit development ancestry remains reachable through the protected branch
-`archive/pre-rust-history-reset` and historic tags. An independently restored
-all-refs bundle also preserves it.
+22-commit development ancestry is preserved in verified all-refs backup bundles.
+The temporary `archive/pre-rust-history-reset` branch was retired on 2026-11-01
+at the owner's request, after restoring the backup and verifying the exact
+source tree and complete object integrity. Its dedicated protection rule was
+removed with it; release tags, assets and storage were unchanged.
 
 On 2026-11-01 the owner explicitly authorized the history cutover. After successful
 push-event Rust CI, main, develop and sandbox were moved to this one-commit root.
 Only the two non-fast-forward guards were briefly adjusted for that authorized
 operation and immediately restored; required CI and all tag/storage protections
 remained enforced. Subsequent application changes descend normally from the root.
-Main stays at the root until a separately authorized production promotion.
+Main subsequently advanced through guarded 0.1.3 promotion. Future production
+updates continue through the signed promotion path.
 
 To inspect historical source without changing a current branch:
 
 ```bash
-git fetch origin archive/pre-rust-history-reset
-git switch --detach 58729d30847709553f8e114251adc2256cb812be
-# Published 0.1.2 source remains at its original tag:
+git fetch origin --tags
+# Published source remains at its original tag:
 git switch --detach 0.1.2
+
+# Recover the original pre-reset snapshot in an isolated repository:
+RF_RESTORE="$(mktemp -d)"
+git clone --mirror \
+  /home/devops/backups/release-flow/20261101T121908Z/original-all-refs.bundle \
+  "$RF_RESTORE/release-flow.git"
+git -C "$RF_RESTORE/release-flow.git" show --stat \
+  58729d30847709553f8e114251adc2256cb812be
 ```
 
 The development branches descend from the clean root. `git log --all`
-continues to show historical evidence intentionally; the archive must not be
-removed to shorten that view. No tag, release asset or storage record is moved.
+continues to include historical tags and the separate storage history. The
+archive branch's retirement does not move any tag, release asset or storage record.
 
 Unused candidate and preparation branch pointers can be pruned after completed
 CI and verified backups. Their removal never deletes signed tags, retained bytes
 or publication records. Recovery material is retained outside the checkout at
 `/home/devops/backups/release-flow/20261101T121908Z`, including an all-refs bundle
-and the exact cutover/rollback procedure. A rollback is itself an owner-authorized
-protected-ref operation: restore the archived commit using leases against the
-then-current tips, preserve new work in a backup ref, and restore the original
-rulesets immediately. Never reset or force-push branches as routine development.
+and the historical cutover record. Backups support source recovery into an
+isolated clone; do not apply the old cutover rollback plan to branches that now
+contain published releases. Recover through normal forward commits and preserve
+the released source ancestry.
 
 ## External consumer integration
 
