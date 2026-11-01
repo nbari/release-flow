@@ -1,235 +1,100 @@
-# Release Flow
+# release-flow
 
-Define how your project builds. Release Flow handles release candidates,
-verification, promotion, and publishing.
+A read-only Rust CLI for inspecting Git repository state, release readiness,
+SemVer plans, and GitHub Actions results.
 
-Release Flow is a language-independent release pipeline for GitHub. Give it a
-small project adapter; keep the release orchestration in shared workflows.
-Use the **Release Flow Provenance** Action to check configuration in any job.
-No Rust or Docker installation is required to use the Action.
+[![CI](https://github.com/nbari/release-flow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nbari/release-flow/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/release-flow.svg)](https://crates.io/crates/release-flow)
 
-## Why Release Flow?
+The release automation framework now lives in
+[nbari/release](https://github.com/nbari/release). This repository contains the
+Rust application. Its build, tests and CI do not require that framework, Docker,
+Node.js or a second source checkout. Consumer integration is planned separately.
 
-- Build a candidate once, verify its inventory and digests, and retain those bytes.
-- Promote the exact validated commit with a signed, immutable version tag.
-- Publish independently to configured destinations; retry a failed destination
-  without rebuilding artifacts or repeating successful publication.
-- Keep application behavior in your adapter and release operations in managed files.
+## Build and install
 
-The Rust binary in this repository is a reference application that exercises the
-pipeline. Consumers use Just, shell adapters and GitHub Actions.
-
-## How It Works
-
-```mermaid
-flowchart LR
-    D[develop] -->|just deploy + adapter| C[Immutable release candidate]
-    C --> W[Reusable candidate workflow]
-    W --> V[Verify manifest and retain exact bytes]
-    V -->|Authorized signed promotion| M[main + develop + version tag]
-    M --> R[Reusable release workflow]
-    R --> G[GitHub Release]
-    R --> O[Other configured publishers]
-    G -. Independent retry .-> R
-```
-
-Local Just commands prepare candidates and operate releases. The Marketplace
-Action validates configuration in a **step** without executing the adapter.
-The reusable workflows run the complete multi-job pipeline. Your adapter owns
-version changes, tests, build targets, artifact inventory and packaging.
-
-`main` contains promoted releases; `develop` is the integration branch;
-`sandbox` is for experiments. Promotion advances `main` and `develop` together.
-The separate `release-flow-storage` branch stores release evidence and is never
-merged into application branches. See [branch lifecycle](docs/BRANCHES.md).
-
-## Quick Start
-
-You need Git 2.31+, Bash 3.2+, jq 1.6+, Just 1.27+ and GitHub CLI for local
-release operations. Candidate packaging uses Linux runners and GNU tar. Build
-tools are chosen by your adapter.
-
-Follow the executable [installation guide](docs/ADOPTION.md#installation) to
-verify and install a published distribution bundle, or build it from a pinned,
-clean source checkout. The bundle installs local scripts and thin, SHA-pinned
-workflow callers. Your root `.justfile` needs one line:
-
-```just
-import '.justfiles/deploy.just'
-```
-
-Try the complete [acme/hello shell application](examples/shell/README.md). It
-requires neither Cargo nor a container registry and publishes only to GitHub.
-
-## Integrate With Your Project
-
-Your project owns these files:
-
-```text
-.justfile                          # imports the managed deploy module
-.release-flow.json                 # repository, pins, storage, publishers
-tools/adapter.sh                   # your executable adapter
-VERSION                            # or your project's version file
-.github/workflows/candidate.yml    # installed pinned caller
-.github/workflows/release.yml      # installed pinned caller
-.justfiles/ + scripts/             # managed bundle support; do not edit
-```
-
-The adapter implements `version`, `set-version`, `verify`, `targets`, `inventory`
-and `package`. See the [protocol and full configuration](docs/ADOPTION.md).
-Rust projects can install the optional Cargo adapter with `--with-cargo-adapter`.
-
-Before the first production candidate, configure immutable GitHub storage,
-signing, environments and branch/tag rules. The [owner setup](docs/RULESETS.md)
-and [GitHub storage guide](docs/GITHUB_STORAGE.md) explain those one-time steps.
-Storage can also use S3 or a local file store; GitHub is the simplest hosted path.
-
-## GitHub Marketplace Action
-
-Use the reviewed full commit SHA recorded in your installed
-`.release-flow-bundle.json.source_commit` wherever `FULL_SHA` appears below.
-The [Marketplace guide](docs/MARKETPLACE.md) records publication requirements
-and the public listing's activation state.
-
-```yaml
-permissions:
-  contents: read
-jobs:
-  validate:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: nbari/release-flow@FULL_SHA
-        id: validation
-        with:
-          operation: validate
-          adapter: tools/adapter.sh
-```
-
-Validation checks configuration, tools, safe paths and the declared adapter
-contract. It never invokes adapter commands or mutates the project. Outputs
-include `project`, `adapter`, `project-directory`, `runtime-revision` and
-`validation-json`. Linux and macOS runners need Bash, Git and jq.
-
-## Reusable GitHub Workflows
-
-These references belong at the **job** level. The installer renders the full
-SHA into both callers and supplies a matching example `pipeline.sha`.
-
-```yaml
-name: Candidate
-on:
-  push:
-    branches: ['release/**']
-permissions:
-  contents: read
-jobs:
-  candidate:
-    uses: nbari/release-flow/.github/workflows/candidate.yml@FULL_SHA
-    with:
-      adapter: tools/adapter.sh
-    permissions:
-      contents: write
-      id-token: write
-```
-
-```yaml
-name: Release
-on:
-  push:
-    tags: ['[0-9]+.[0-9]+.[0-9]+']
-permissions:
-  contents: read
-jobs:
-  release:
-    uses: nbari/release-flow/.github/workflows/release.yml@FULL_SHA
-    permissions:
-      contents: write
-      id-token: write
-```
-
-Candidate build jobs receive read-only source access. Only the retention job
-receives storage write permission. GitHub storage uses the consumer's GitHub
-token; optional S3 uses OIDC or explicitly named credentials. Full caller
-examples, including dispatch-based retries, are in [ADOPTION.md](docs/ADOPTION.md).
-
-## Prepare and Promote a Release
-
-From a clean, synchronized integration checkout:
+Use the stable Rust toolchain configured in `rust-toolchain.toml`, plus Git.
+GitHub CLI (`gh`) and authentication are needed to inspect GitHub Actions;
+local-only readiness checks work without them.
 
 ```bash
-git switch develop
-just deploy                         # patch; leaves develop unchanged
-# just deploy-minor
-# just deploy-major
-just release-candidates
-just release-status X.Y.Z
+git clone https://github.com/nbari/release-flow.git
+cd release-flow
+cargo build --release --locked
+./target/release/release-flow --version
 ```
 
-`just deploy` pushes `release/X.Y.Z-<base12>` with a version bump commit in an
-isolated temporary worktree. GitHub validates that exact candidate, builds each
-target, verifies `manifest.json` and `SHA256SUMS`, and retains the original bytes.
-On `sandbox`, deploy creates a `release/test/...` candidate that cannot be promoted.
-
-After inspecting successful CI and retention, an authorized operator runs:
+The existing published crate identity remains `release-flow`:
 
 ```bash
-just release-promote release/X.Y.Z-<base12> <candidate-sha> --dry-run
-just release-promote release/X.Y.Z-<base12> <candidate-sha>
+cargo install release-flow --locked
 ```
 
-All preconditions must pass. Promotion atomically advances `main` and `develop`
-and creates the signed tag. Publishing reuses the retained artifacts. Never
-push `main` directly or move a version tag. See [release design](docs/RELEASE_DESIGN.md).
+The published crate can lag the current source. This migration does not publish
+a new crate or change previously published versions. Use the source build to
+exercise the commands documented below against the current implementation.
 
-## Recover a Failed Release
+## Inspect a repository
+
+Run from a Cargo project's Git worktree:
 
 ```bash
-just release-status X.Y.Z --json
-just release-retry X.Y.Z github-release
-just release-prune --dry-run
+release-flow status
+release-flow status --json
+release-flow plan patch --json
+release-flow plan minor --json
+release-flow plan major --json
+release-flow check --local-only --json
+release-flow check --json
 ```
 
-A failed candidate is fixed by committing the change to its base and preparing
-a fresh candidate. A stale base needs a fresh candidate too. A failed publisher
-is retried independently for the same version and bytes. Status and dry-run
-cleanup are read-only. Explicit cleanup keeps unpublished production candidates;
-see [candidate management](docs/CANDIDATES.md) before using `--apply`.
+- `status` reports branch/commit, working-tree cleanliness, version tags,
+  upstream relationships, and available GitHub Actions evidence.
+- `plan` calculates a prospective SemVer bump and reports conflicts/blockers.
+- `check` evaluates readiness and returns nonzero when blocked or evidence is
+  unavailable. `--local-only` skips remote CI checks.
 
-## Upgrading Release Flow
+JSON is intended for scripts; human-readable output is available without
+`--json`. Use `-v`/`-vv` for diagnostics. Run `release-flow --help` or a command's
+`--help` for arguments.
 
-Verify the next bundle, run `install.sh --target . --upgrade`, and review the
-changes. Align the Action reference, both reusable workflow references and
-`.release-flow.json.pipeline.sha` with the new bundle's source commit. The
-installer rejects edits to managed files and never overwrites your configuration
-or adapter. Run `--check` to detect drift. See [upgrades](docs/ADOPTION.md#upgrades).
+Commands inspect state only. They do not bump versions, prepare candidates,
+push branches, create tags, build release artifacts or publish packages. The
+current readiness convention expects an integration branch named `develop` and
+checks GitHub `CI`/`Candidate` evidence for the exact source commit. A version
+already tagged as released is correctly reported as blocked for another release.
 
-## Examples
+## Development
 
-- [Shell application: acme/hello](examples/shell/README.md) — complete adoption path.
-- [Cargo adapter](scripts/adapters/cargo.sh) — reusable Rust project behavior.
-- [Reference adapter](scripts/adapters/release-flow.sh) — Rust binaries, crate
-  archive and this project's distribution bundle. This repository publishes
-  these files as GitHub Release assets; crates.io publication is optional and
-  is not enabled for its Marketplace release.
+```bash
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-features
+cargo build --release --locked
+```
 
-## Security
+`just check` runs the same gates. Unit tests cover typed command handling, Git
+snapshots, SemVer planning and readiness. CLI integration tests create isolated
+Git fixtures and mock remote Actions evidence. They need no release engine.
 
-Pin Actions, reusable workflows and installed runtime to full commit SHAs.
-Workflow/runtime identity and consumer source identity are checked separately.
-Untrusted PRs must never execute adapters with publisher credentials; avoid
-`pull_request_target`. Validation needs no secrets, OIDC or network downloads.
-Release tags and retained artifacts are immutable. Publisher locks and durable
-receipts make retries recoverable. See [security model](docs/RELEASE_DESIGN.md) and
-[verification evidence](docs/VERIFICATION.md).
+Keep commands, dispatch, actions and domain logic separate. Preserve actionable
+errors and fail readiness closed when remote evidence cannot be established.
+See [AGENTS.md](AGENTS.md) for contribution conventions.
 
-## Documentation
+## Repository and release history
 
-[Adoption](docs/ADOPTION.md) · [Marketplace](docs/MARKETPLACE.md) ·
-[Release design](docs/RELEASE_DESIGN.md) · [Branches](docs/BRANCHES.md) ·
-[Candidates](docs/CANDIDATES.md) · [Rulesets](docs/RULESETS.md) ·
-[GitHub storage](docs/GITHUB_STORAGE.md) · [Live verification](docs/VERIFICATION.md)
+Normal development integrates through `develop`; `main` is protected by the
+Rust `CI OK` check and review policy. No crate or GitHub Release is published by
+this repository's CI. New publication requires a separate explicit release task.
 
-BSD-3-Clause licensed. Repository-native checks: `just check` and `just pipeline-test`.
+Historic versions, signed tags, GitHub Releases and retained bytes remain valid.
+The protected `release-flow-storage` branch is historical release evidence and
+must never be merged, reset, deleted or synchronized with application branches.
+Old SHA-pinned Actions remain available from their original immutable commits.
+
+The [migration record](docs/MIGRATION.md) identifies the framework source and
+explains future adoption. No Action, reusable release workflow, adapter runtime,
+release storage backend or publishing engine is embedded in this application's
+current source tree.
+
+BSD-3-Clause licensed. The crates.io package name and repository identity are unchanged.

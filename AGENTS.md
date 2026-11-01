@@ -1,34 +1,30 @@
-# Project guidelines
+# Rust application guidelines
 
-This project is primarily a reference implementation of safe, independently recoverable release pipelines. Keep the Rust command-line binary intentionally small. For CLI code, follow the existing separation of commands (clap definitions), dispatch (typed argument conversion), actions (execution), and domain modules (Git/version/release logic); do not write a separate architecture tutorial.
+release-flow is a standalone, read-only Rust CLI for inspecting Git repository
+state, SemVer plans, release readiness and GitHub Actions evidence. Its crate
+and binary names remain release-flow. The release framework lives independently
+in nbari/release; no framework integration is enabled in this repository yet.
+Use plain imperative commit subjects without conventional prefixes.
 
-Treat source SHA, version, and artifact digest as immutable identities. Keep branch promotion, tag creation, artifact publishing and recovery in separate well-validated steps. Never fix publication by deleting or moving tags, silently rebuilding old versions, or rewriting a developer's sandbox branch. Prefer idempotent, narrowly scoped retries and explicit failure-injection tests.
+Keep clap definitions in cli/commands, typed argument conversion in cli/dispatch,
+execution in cli/actions, and Git/version/check logic in the existing domain
+modules. Use Command with argument arrays, contextual anyhow errors and typed
+reports. Parse external metadata as data; never execute it. Keep commands
+read-only: status, plan and check must not change files, refs, tags or releases.
 
-Contributors normally submit PRs to `develop`; an explicitly authorized maintainer may integrate directly by fast-forward, without a PR. Do not directly update `main`; the production promotion path must be tested and explicitly authorized. Tests and documentation should focus on release invariants and failure recovery, not on CLI scaffolding.
+Use rust-toolchain.toml and the committed Cargo.lock. Do not casually change
+crate identity, dependencies, compatibility or release versions. Preserve all
+historic signed tags, immutable assets, candidate refs and the isolated protected
+release-flow-storage branch. Never rewrite published history or publish a crate
+without explicit authorization.
 
-Before proposing release changes: run `just check`, inspect GitHub Actions results on the exact source SHA, and verify candidate manifests. No operation that changes a remote branch or creates a tag belongs in `status` or `plan`.
+Run cargo fmt, strict locked Clippy, locked workspace tests and a locked release
+build. Keep CLI integration tests independent of external source checkouts. CI
+must build this application without the release framework. Unknown remote/CI
+evidence must remain visible and fail readiness checks closed.
 
-## Agent and terminal workflows with Herdr
-
-When `HERDR_ENV=1` is present, always launch subagents, tasks, or visible command watchers in a sibling Herdr pane so the user can easily observe activity and progress live:
-
-1. **Split a visible sibling pane:**
-   ```bash
-   herdr pane split --current --direction right --cwd "$PWD" --no-focus
-   ```
-2. **Launch an agent or run a command:**
-   - To launch an agent:
-     ```bash
-     herdr agent start <name> --kind <kind> --pane <pane-id>
-     herdr agent prompt <name> "<task>" --wait
-     ```
-   - To run or watch a command:
-     ```bash
-     herdr pane run <pane-id> "<command>"
-     herdr pane wait-output <pane-id> --match "<text>" --timeout <ms>
-     ```
-3. **Clean up when finished:**
-   ```bash
-   herdr pane close <pane-id>
-   ```
-Always close created panes when their task completes.
+Submit normal changes through develop. Authorized maintainers may integrate by
+fast-forward after exact-source CI; main requires the Rust CI OK check and
+protected review policy. Do not disable protections to force an update. Future
+framework adoption is a separate task through its public pinned installation
+path; do not vendor an engine or add cross-repository CI dependencies now.
