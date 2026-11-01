@@ -17,9 +17,9 @@ release-flow-storage history stay in this repository. No old tags, storage
 branch or release binding is transplanted into nbari/release. Deleting the
 framework from the current tree does not remove files from its historic SHAs.
 
-The obsolete main Candidate OK requirement is replaced by Rust CI OK while
-history/tag/storage integrity protections remain. Main uses ordinary reviewed
-Rust integration; the new framework separately keeps release-only main policy.
+During separation, the obsolete main Candidate OK requirement was replaced by
+Rust CI OK while history/tag/storage integrity protections remained. External
+release adoption now prepares a separate main promotion policy; see RELEASES.md.
 
 ## Clean Rust history boundary
 
@@ -27,9 +27,15 @@ The Rust-only snapshot at `58729d30847709553f8e114251adc2256cb812be` was
 reproduced byte-for-byte as the signed, zero-parent commit
 `c2cde54ad18425994c9aa741f850e37296adc5d1` (`Initial Rust CLI`). The original
 22-commit development ancestry remains reachable through the protected branch
-`archive/pre-rust-history-reset`, historic tags and candidate refs. An independently
-restored all-refs bundle also preserves it. Protected-branch cutover requires a
-separate owner decision; preparing a root does not itself replace main/develop.
+`archive/pre-rust-history-reset` and historic tags. An independently restored
+all-refs bundle also preserves it.
+
+On 2026-11-01 the owner explicitly authorized the history cutover. After successful
+push-event Rust CI, main, develop and sandbox were moved to this one-commit root.
+Only the two non-fast-forward guards were briefly adjusted for that authorized
+operation and immediately restored; required CI and all tag/storage protections
+remained enforced. Subsequent application changes descend normally from the root.
+Main stays at the root until a separately authorized production promotion.
 
 To inspect historical source without changing a current branch:
 
@@ -40,9 +46,18 @@ git switch --detach 58729d30847709553f8e114251adc2256cb812be
 git switch --detach 0.1.2
 ```
 
-The current integration branch descends from the clean root. `git log --all`
+The development branches descend from the clean root. `git log --all`
 continues to show historical evidence intentionally; the archive must not be
 removed to shorten that view. No tag, release asset or storage record is moved.
+
+Unused candidate and preparation branch pointers can be pruned after completed
+CI and verified backups. Their removal never deletes signed tags, retained bytes
+or publication records. Recovery material is retained outside the checkout at
+`/home/devops/backups/release-flow/20261101T121908Z`, including an all-refs bundle
+and the exact cutover/rollback procedure. A rollback is itself an owner-authorized
+protected-ref operation: restore the archived commit using leases against the
+then-current tips, preserve new work in a backup ref, and restore the original
+rulesets immediately. Never reset or force-push branches as routine development.
 
 ## External consumer integration
 
