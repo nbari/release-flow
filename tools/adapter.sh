@@ -60,13 +60,13 @@ case "$command" in
         export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
         ;;
     esac
-    if [[ "$selected" == *linux* && "${GITHUB_ACTIONS:-}" == true ]] && ! command -v rpm2cpio >/dev/null 2>&1; then
+    if [[ "$selected" == *linux* && "${GITHUB_ACTIONS:-}" == true ]] && ! command -v rpm2archive >/dev/null 2>&1; then
       sudo apt-get update -y >&2
       sudo apt-get install -y rpm rpm2cpio >&2
     fi
     if [[ "$selected" == *linux* ]]; then
       rpm --version >&2
-      command -v rpm2cpio >&2
+      command -v rpm2archive >&2
     fi
     bash "$cargo_adapter" package "$version" "$out"
     bash "$root/tools/adapter.sh" inventory "$version" | python3 tools/verify-packages.py "$selected" "$version" "$out"

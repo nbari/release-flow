@@ -60,31 +60,8 @@ def tar_binary(archive, executable):
     return binaries[0]
 
 
-def rpm_binary(data):
-    position = 0
-    binaries = []
-    while position < len(data):
-        header = data[position:position + 110]
-        require(header[:6] in (b"070701", b"070702"), "Invalid RPM cpio payload")
-        fields = [int(header[i:i + 8], 16) for i in range(6, 110, 8)]
-        size, name_size = fields[6], fields[11]
-        start = position + 110
-        name = data[start:start + name_size].rstrip(b"\0").decode("utf-8")
-        position = (start + name_size + 3) & ~3
-        if name == "TRAILER!!!":
-            break
-        path = PurePosixPath(name)
-        require(".." not in path.parts, "Unsafe RPM path")
-        if str(path).lstrip("/") == "usr/bin/release-flow":
-            require(fields[1] & 0o111, "RPM binary is not executable")
-            binaries.append(data[position:position + size])
-        position = (position + size + 3) & ~3
-    require(len(binaries) == 1, "Expected exactly one RPM application binary")
-    return binaries[0]
-
-
-def inspect(command):
-    result = subprocess.run(command, capture_output=True)
+def inspect(command, data=None):
+    result = subprocess.run(command, input=data, capture_output=True)
     if result.returncode:
         description = result.stderr.decode("utf-8", errors="replace").strip()
         if result.stdout:
@@ -125,7 +102,12 @@ def verify_packages(target, version, directory, inventory):
         elif name.endswith(".rpm"):
             arch = inspect(["rpm", "-qp", "--queryformat", "%{ARCH}", str(path)]).decode().strip()
             require(arch == {"x86_64": "x86_64", "aarch64": "aarch64"}[cpu], "Incorrect RPM architecture")
-            binary = rpm_binary(inspect(["rpm2cpio", str(path)]))
+            # rpm2cpio 4.18 compares output length to optional LONGARCHIVESIZE,
+            # absent in valid Cargo-generated RPMs. rpm2archive reads the actual
+            # file stream instead. Require successful extraction.
+            payload = inspect(["rpm2archive", "--nocompression", "-"], path.read_bytes())
+            with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
+                binary = tar_binary(archive, executable)
         else:
             raise ValueError("Unexpected package format: " + name)
         verify_binary(binary, target)

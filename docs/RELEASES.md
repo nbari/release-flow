@@ -73,6 +73,12 @@ verify ELF/Mach-O/PE machine headers, libc loader, DEB/RPM architecture and bina
 payloads. Application builds need their own tools; the read-only Action still
 needs only Bash, Git and jq and never invokes this adapter.
 
+GNU DEBs use automatic runtime dependency detection; musl binaries remain static.
+RPM payload checks use rpm2archive and require its successful exit. RPM 4.18's
+[older rpm2cpio utility](https://github.com/rpm-software-management/rpm/blob/rpm-4.18.2-release/rpm2cpio.c)
+incorrectly rejects packages without the optional archive
+size field even after emitting the full payload. No extractor errors are ignored.
+
 ## Production prerequisites and sequence
 
 Storage immutability and the protected release-flow-storage branch already exist.
