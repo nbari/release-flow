@@ -87,20 +87,20 @@ publish-github-release must allow trusted numeric tags and operator recovery ref
 Do not change or reset historical storage. Only github-release is configured;
 selecting any other channel fails closed without publishing elsewhere.
 
-Before production, main must require the external check `candidate / Candidate OK`
-and allow only authorized guarded promotion. Preserve main/develop deletion,
-linear-history/non-fast-forward rules, immutable candidate/tag rules and develop's
-CI OK review policy. Applying this release-policy transition is an owner action;
-the integration does not bypass the existing Rust-main policy to publish a tag.
+Main requires the external check `candidate / Candidate OK` and reserves updates
+for authorized guarded promotion. Main/develop deletion, linear-history and
+non-fast-forward rules, immutable candidate/tag rules and develop's CI OK review
+policy remain enforced. The owner-authorized policy transition was applied on
+2026-11-01 before preparing the first external production candidate.
 
-The exact proposed request bodies are [main integrity](rulesets/main-integrity.json)
-and [main promotion](rulesets/main-promotion.json). After owner authorization,
-review live ruleset drift and update existing IDs 26284550 and 26284554 respectively;
-do not create duplicate rulesets. The first replaces only main's CI OK requirement
-with the externally verified candidate aggregate (which includes production
-retention). The second reserves main updates for the existing administrator role
-through guarded promotion. Neither introduces a bypass on integrity or immutable
-tags. These bodies are prepared, not applied by this integration.
+The applied request bodies are [main integrity](rulesets/main-integrity.json)
+and [main promotion](rulesets/main-promotion.json), for existing IDs 26284550 and
+26284554 respectively. The first requires the externally verified candidate
+aggregate, which includes production retention. The second reserves main updates
+for the existing administrator role through guarded promotion. Neither introduces
+a bypass on integrity or immutable tags. Future policy changes require owner
+authorization and review of live drift; do not create duplicate rulesets or
+blindly overwrite another administrator's changes.
 
 Start with `git switch sandbox` and `just deploy`. Test-only candidates compile
 and package for real but cannot be promoted; durable retention is skipped.
@@ -173,8 +173,8 @@ to change this ancestry verdict. New candidates descend from the clean root.
 
 Immutable releases are enabled. candidate-storage allows
 `release/*` branches; publish-github-release allows main/develop and numeric tags.
-The old storage branch and release identities were unchanged. The proposed main
-release-policy transition above remains unapplied.
+The old storage branch and release identities were unchanged by that test. The
+main promotion policy described above is now active.
 
 Production candidate retention, guarded promotion and GitHub publication are
 separate later authorized stages. None occurred during this integration test.

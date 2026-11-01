@@ -19,7 +19,7 @@ framework from the current tree does not remove files from its historic SHAs.
 
 During separation, the obsolete main Candidate OK requirement was replaced by
 Rust CI OK while history/tag/storage integrity protections remained. External
-release adoption now prepares a separate main promotion policy; see RELEASES.md.
+release adoption now uses a guarded main promotion policy; see RELEASES.md.
 
 ## Clean Rust history boundary
 
