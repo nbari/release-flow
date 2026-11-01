@@ -1,0 +1,2 @@
+# Keep shell adapters and managed checksums identical on native Windows runners.
+* text=auto eol=lf
