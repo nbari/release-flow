@@ -134,12 +134,38 @@ delete/move tags, replace immutable assets or rebuild a promoted version.
 
 ## Verification state
 
-Local Rust checks and nine adapter/pinning/publisher rejection contracts passed.
-[Development CI](https://github.com/nbari/release-flow/actions/runs/41308831485)
-passed on the isolated integration source, including external Action execution,
-Linux AMD64, macOS ARM64 and Windows AMD64 compilation. Local next-version
-fixtures also produced and inspected Linux packages and a source crate containing
-no managed release engine. Complete test-candidate evidence will be added after
-execution. Production
-retention, guarded promotion and GitHub publication are separate later stages;
-none may be inferred from a successful test-only candidate.
+Local Rust checks passed: formatting, strict locked Clippy, 27 unit tests, eight
+CLI integration tests, release build and nine consumer contract tests.
+
+- [Development CI](https://github.com/nbari/release-flow/actions/runs/41315381609)
+  passed at `784e83402780e324ab1f2d53804e6c82fe827aa9`, including the external
+  read-only Action, reusable test/build jobs and native Linux/macOS/Windows
+  executable smoke tests.
+- [Complete test-only candidate](https://github.com/nbari/release-flow/actions/runs/41315382368)
+  passed at source `a3b8432233cbb612d44f47a7b3503265b27d12e3`, with framework
+  runtime `d9604935e9bdadd9ba2ab18af9a8290a39899ac6`. All eight native binary
+  targets, the source-crate leg, manifest assembly, independent verification and
+  `candidate / Candidate OK` passed. Production retention was skipped.
+
+The complete downloaded inventory has 19 artifacts. Manifest SHA-256:
+`577d76e75e1b7e1d329c708483b5bfdaa3330b4b82b9838d0319f5ea21bf901e`.
+All machine types and Linux package metadata/payloads were rechecked locally.
+Both Linux AMD64 executables report version 0.1.3 and the exact candidate source
+SHA. The `.crate` records that same source and excludes the managed engine.
+Missing-file and byte-corruption probes were both rejected by the real verifier.
+
+This run used the isolated `validation/rust-consumer` test base while the separate
+history-cutover decision was pending. The normal consumer configuration retains
+`test_base: sandbox`; it was not changed to this temporary validation branch.
+After the owner-controlled history cutover and normal branch integration, run a
+fresh sandbox test candidate against that canonical base. Do not treat the
+temporary validation candidate as a production candidate or promote it.
+
+The existing GitHub backend successfully read historical 0.1.2 as PUBLISHED with
+its original manifest. Immutable releases are enabled. candidate-storage allows
+`release/*` branches; publish-github-release allows main/develop and numeric tags.
+The old storage branch and release identities were unchanged. The proposed main
+release-policy transition above remains unapplied.
+
+Production candidate retention, guarded promotion and GitHub publication are
+separate later authorized stages. None occurred during this integration test.
