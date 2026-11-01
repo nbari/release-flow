@@ -99,6 +99,8 @@ Linux AMD64, macOS Apple Silicon and Windows AMD64. These workflows never publis
 delegates Cargo versioning, verification and packaging to the installed generic
 adapter. The installer-owned files under `scripts/` and `.justfiles/` are tracked
 by `.release-flow-bundle.json`; upgrade them through the framework installer.
+The GitHub-only bundle profile installs 19 local scripts. Remote workflow helpers,
+other publishers and unused storage backends stay in the framework repository.
 The release engine is maintained in nbari/release, with no local implementation
 changes. Cargo source and the published crate do not include that engine.
 

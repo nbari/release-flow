@@ -17,7 +17,7 @@ jobs:
           persist-credentials: false
       - name: Validate release configuration without executing the adapter
         id: release
-        uses: nbari/release@d9604935e9bdadd9ba2ab18af9a8290a39899ac6
+        uses: nbari/release@43d2b794259f1681fe729696520891fa5c3ba763
         with:
           operation: validate
           adapter: tools/adapter.sh
@@ -26,7 +26,7 @@ jobs:
           RESULT: ${{ steps.release.outputs.validation-json }}
           RUNTIME: ${{ steps.release.outputs.runtime-revision }}
         run: |
-          test "$RUNTIME" = d9604935e9bdadd9ba2ab18af9a8290a39899ac6
+          test "$RUNTIME" = 43d2b794259f1681fe729696520891fa5c3ba763
           printf '%s' "$RESULT" | jq -e '.project=="release-flow" and .adapter_executed==false'
           git diff --exit-code
       - name: Install committed Rust toolchain components

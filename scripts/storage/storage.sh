@@ -75,16 +75,24 @@ if [[ -z "${uri}" ]]; then
   rf_die "storage not configured: set storage.uri in .release-flow.json or RELEASE_FLOW_STORAGE_URI" 3
 fi
 
+require_backend() {
+  [[ -f "$RF_SCRIPTS/storage/backends/$1.sh" ]] \
+    || rf_die "storage: $1 backend is not installed; install the full bundle for other storage backends" 3
+}
+
 case "${uri}" in
   file://*)
+    require_backend fs
     # shellcheck source=scripts/storage/backends/fs.sh
     source "${RF_SCRIPTS}/storage/backends/fs.sh"
     ;;
   s3://*)
+    require_backend s3
     # shellcheck source=scripts/storage/backends/s3.sh
     source "${RF_SCRIPTS}/storage/backends/s3.sh"
     ;;
   github://*)
+    require_backend github
     # shellcheck source=scripts/storage/backends/github.sh
     source "${RF_SCRIPTS}/storage/backends/github.sh"
     ;;

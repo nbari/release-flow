@@ -1,16 +1,17 @@
 {
   "schema_version": 1,
   "bundle_version": "0.0.0",
-  "source_commit": "d9604935e9bdadd9ba2ab18af9a8290a39899ac6",
+  "source_commit": "43d2b794259f1681fe729696520891fa5c3ba763",
+  "profile": "github",
   "files": [
     {
       "path": ".github/workflows/candidate.yml",
-      "sha256": "d455c424d056604643f91f2a8ba336533986377bca6737e2a9eaa69f1c6516cc",
+      "sha256": "41d7a0af0b27c6b189729c589aa093817236d919b36a40ced46701b056302e01",
       "mode": "644"
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "d69c6ca19842a8482ec843741bf26cc82d97653b3e32301a8b07761f62eeaec5",
+      "sha256": "ef36a5bc54372b3bf89df09ba7db56813ce35d1b2d8251e4848de2b34d8497dd",
       "mode": "644"
     },
     {
@@ -24,21 +25,6 @@
       "mode": "755"
     },
     {
-      "path": "scripts/candidate-guard.sh",
-      "sha256": "901dec9255b3d286384f97e139dcbc97989b315165eb8b82ae545bdfcae062e1",
-      "mode": "755"
-    },
-    {
-      "path": "scripts/candidate-manifest.sh",
-      "sha256": "e95bcbbbd8702e178a8d79942e3ef37e3201d4372caeda044db4adf41d26acab",
-      "mode": "755"
-    },
-    {
-      "path": "scripts/candidate-targets.sh",
-      "sha256": "b6c5f638953fe3b37f7828195d9c728cc5787146eb3e75eb6b4b0b6d5695442b",
-      "mode": "755"
-    },
-    {
       "path": "scripts/lib/common.sh",
       "sha256": "1429c42babc95112a5533766faa24a5082e19f6e1c866b7235b7c0d86870924f",
       "mode": "755"
@@ -46,11 +32,6 @@
     {
       "path": "scripts/lib/github.sh",
       "sha256": "7a223368022acf8789517e40a35866a022e9eb37640aaf331885cb968a5f5221",
-      "mode": "755"
-    },
-    {
-      "path": "scripts/lib/project.sh",
-      "sha256": "f91e4fe416e1135e26096c2e0d8ff72f30bb22d99047e7b004450d29669db1a6",
       "mode": "755"
     },
     {
@@ -64,16 +45,6 @@
       "mode": "755"
     },
     {
-      "path": "scripts/pipeline-pin.sh",
-      "sha256": "500f155b2effee82e815ccc1bbad7d956397475d5e3e5866181de519280c5744",
-      "mode": "755"
-    },
-    {
-      "path": "scripts/publication/ci-install-oras.sh",
-      "sha256": "bfea7280f2d5f9579b7dd8eb17ef4d905980407e852485d3e179d15e48c00846",
-      "mode": "755"
-    },
-    {
       "path": "scripts/publication/latest.sh",
       "sha256": "d2e82b050a0d1fc0c376bed54c9b0620c7de8c4a5e32d8440fd5e3322b48c99e",
       "mode": "755"
@@ -81,11 +52,6 @@
     {
       "path": "scripts/publication/ledger.sh",
       "sha256": "6f5995d604c43941d49cfee95956cd0e4f07aac1c9b9630cee355cac9383d10a",
-      "mode": "755"
-    },
-    {
-      "path": "scripts/publication/plan.sh",
-      "sha256": "daec8a8dee9bb382361f2e511d608481d699ec6ced07e46ee348b5f08fd784c6",
       "mode": "755"
     },
     {
@@ -99,28 +65,8 @@
       "mode": "755"
     },
     {
-      "path": "scripts/publishers/crates-io.sh",
-      "sha256": "b72c84c98f7e88cc9d6d32b211d6e4d13373833a38eb982b2f655a404936b922",
-      "mode": "755"
-    },
-    {
-      "path": "scripts/publishers/docs.sh",
-      "sha256": "971500e0a79bb72e23376b4735dac41f8d8e2e2a543109541be03b978e2fb189",
-      "mode": "755"
-    },
-    {
       "path": "scripts/publishers/github-release.sh",
       "sha256": "e9e8130ac40057efeafee5e54a24e677a5b760a6d01fae474a4d2697e5734634",
-      "mode": "755"
-    },
-    {
-      "path": "scripts/publishers/helm.sh",
-      "sha256": "da6f6589bd12feb01e76d0874dd22ce28e3dff90457982e944e428e64609425d",
-      "mode": "755"
-    },
-    {
-      "path": "scripts/publishers/oci.sh",
-      "sha256": "cd704751ffb8f512bbcae059c886a04c1f7742fdde9f565ca991143bfefc1d2b",
       "mode": "755"
     },
     {
@@ -154,33 +100,13 @@
       "mode": "755"
     },
     {
-      "path": "scripts/storage/backends/fs.sh",
-      "sha256": "96a12a5bf5a04157ef86a51c2099850c97fa2732db698b0a9da391d348311f06",
-      "mode": "755"
-    },
-    {
       "path": "scripts/storage/backends/github.sh",
       "sha256": "7fb5a365591f291a1977c9e424047e6f5433169717e5a18851ff1baba3cace79",
       "mode": "755"
     },
     {
-      "path": "scripts/storage/backends/s3.sh",
-      "sha256": "3956f80978a4ccd6759d82f31b995ff6404d82b8010e490277426c40b935dd0a",
-      "mode": "755"
-    },
-    {
-      "path": "scripts/storage/ci-credentials.sh",
-      "sha256": "a711e63c479e8bbf0976a3ddb73f3d3ed049a9490a4a43bb03408a5fe1f45a3c",
-      "mode": "755"
-    },
-    {
-      "path": "scripts/storage/github-bootstrap.sh",
-      "sha256": "d401580ff3e309d03341d9c89d56bcfd1569df3b0211d4c54df42bfe2aa0889d",
-      "mode": "755"
-    },
-    {
       "path": "scripts/storage/storage.sh",
-      "sha256": "3e3f3176595f9a491d3e730114f7c511f9be453d5ad2099102392bc00465ad3e",
+      "sha256": "bec8d343105ac92f8e9896dfd0f0a3285dbdbc712df5752da4b7a2c6beb6fdb7",
       "mode": "755"
     },
     {

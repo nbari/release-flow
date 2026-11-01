@@ -6,7 +6,7 @@
   "remote": "origin",
   "production_base": "develop",
   "test_base": "sandbox",
-  "pipeline": {"repository": "nbari/release", "sha": "d9604935e9bdadd9ba2ab18af9a8290a39899ac6"},
+  "pipeline": {"repository": "nbari/release", "sha": "43d2b794259f1681fe729696520891fa5c3ba763"},
   "promotion": {
     "main_branch": "main",
     "push_remote": "origin",

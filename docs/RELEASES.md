@@ -8,20 +8,20 @@ files are installed and checksum-managed, with no local modifications.
 
 ## Installation and upgrades
 
-The initial integration uses the clean public framework commit
-`d9604935e9bdadd9ba2ab18af9a8290a39899ac6`, whose VERSION is 0.0.0. This is a
-reviewed source snapshot, not a signed production framework distribution.
-From this application's clean checkout:
+The installed framework revision is recorded in `.release-flow-bundle.json`.
+It is a reviewed source snapshot whose framework VERSION is 0.0.0, rather than
+a signed production framework distribution. Reproduce the installed GitHub-only
+toolset from this application's clean checkout:
 
 ```bash
 RF_SOURCE="$(mktemp -d)"
 RF_OUTPUT="$(mktemp -d)"
-RF_SHA=d9604935e9bdadd9ba2ab18af9a8290a39899ac6
+RF_SHA="$(jq -er .source_commit .release-flow-bundle.json)"
 git clone https://github.com/nbari/release.git "$RF_SOURCE/source"
 git -C "$RF_SOURCE/source" checkout --detach "$RF_SHA"
 test -z "$(git -C "$RF_SOURCE/source" status --porcelain)"
 bash "$RF_SOURCE/source/scripts/release-flow-bundle.sh" \
-  --version 0.0.0 --out "$RF_OUTPUT" --workflow-mode reusable
+  --version 0.0.0 --out "$RF_OUTPUT" --workflow-mode reusable --profile github
 tar -xzf "$RF_OUTPUT/release-flow-bundle-0.0.0.tar.gz" -C "$RF_OUTPUT"
 bash "$RF_OUTPUT/release-flow-bundle-0.0.0/install.sh" \
   --target . --with-cargo-adapter
@@ -31,6 +31,17 @@ Use `--upgrade` for a later reviewed bundle. Review conflicts; never overwrite
 managed local edits silently. Upgrade the Action pin, pipeline SHA, callers and
 bundle source together. Do not manually edit installed engine files or recipes.
 The root Justfile imports `.justfiles/deploy.just`.
+
+With Cargo support, the GitHub profile has 22 managed files: 19 scripts
+(including the generic Cargo adapter), the Just module and two workflow callers.
+It retains every Just operation and local GitHub publisher recovery.
+Compared with the full bundle it omits 15 scripts: remote candidate/runtime
+helpers, inactive publishers, S3/filesystem backends, storage credential/bootstrap
+helpers and the OCI installer. Generic engine regression tests live upstream;
+this repository tests its adapter, package policy and exact managed installation.
+Switching profiles requires `install.sh --upgrade`, which removes obsolete files
+only when their checksums still match the installed lock. Install the full
+profile before configuring another local publisher or storage backend.
 
 ## Workflow responsibilities
 
