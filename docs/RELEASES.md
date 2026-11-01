@@ -87,6 +87,15 @@ linear-history/non-fast-forward rules, immutable candidate/tag rules and develop
 CI OK review policy. Applying this release-policy transition is an owner action;
 the integration does not bypass the existing Rust-main policy to publish a tag.
 
+The exact proposed request bodies are [main integrity](rulesets/main-integrity.json)
+and [main promotion](rulesets/main-promotion.json). After owner authorization,
+review live ruleset drift and update existing IDs 26284550 and 26284554 respectively;
+do not create duplicate rulesets. The first replaces only main's CI OK requirement
+with the externally verified candidate aggregate (which includes production
+retention). The second reserves main updates for the existing administrator role
+through guarded promotion. Neither introduces a bypass on integrity or immutable
+tags. These bodies are prepared, not applied by this integration.
+
 Start with `git switch sandbox` and `just deploy`. Test-only candidates compile
 and package for real but cannot be promoted; durable retention is skipped.
 
@@ -119,7 +128,12 @@ delete/move tags, replace immutable assets or rebuild a promoted version.
 
 ## Verification state
 
-Local Rust and adapter contracts have passed. GitHub multi-platform build and
-complete test-candidate evidence will be added after execution. Production
+Local Rust checks and nine adapter/pinning/publisher rejection contracts passed.
+[Development CI](https://github.com/nbari/release-flow/actions/runs/41308831485)
+passed on the isolated integration source, including external Action execution,
+Linux AMD64, macOS ARM64 and Windows AMD64 compilation. Local next-version
+fixtures also produced and inspected Linux packages and a source crate containing
+no managed release engine. Complete test-candidate evidence will be added after
+execution. Production
 retention, guarded promotion and GitHub publication are separate later stages;
 none may be inferred from a successful test-only candidate.

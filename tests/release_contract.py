@@ -125,6 +125,49 @@ class ReleaseContract(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Missing or unexpected"):
                 packages.verify_packages("x86_64-unknown-linux-musl", version, out)
 
+    def test_unconfigured_publishers_fail_closed(self):
+        version = adapter("version").stdout.strip()
+        plan = ROOT / "scripts/publication/plan.sh"
+        for channel in ("crates-io", "oci", "docs", "helm", "unknown-channel"):
+            result = subprocess.run(["bash", str(plan), version, channel], cwd=ROOT,
+                                    text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0, channel)
+        result = subprocess.run(["bash", str(plan), version, "github-release"], cwd=ROOT,
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("github-release=true", result.stdout)
+        self.assertIn("crates-io=false", result.stdout)
+
+    def test_invalid_candidate_identity_fails_before_adapter_execution(self):
+        result = subprocess.run(["bash", str(ROOT / "scripts/candidate-guard.sh"),
+                                 "--ref", "release/test/0.1.3-000000000000",
+                                 "--commit", "0" * 40], cwd=ROOT, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Commit mismatch", result.stderr)
+
+    def test_mutable_workflow_pin_is_rejected_without_moving_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            runtime = project / "checkout"
+            subprocess.run(["git", "init", "--quiet", str(runtime)], check=True)
+            subprocess.run(["git", "-C", str(runtime), "-c", "user.name=Runtime fixture",
+                            "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+                            "commit", "--quiet", "--allow-empty", "-m", "Create the runtime fixture"], check=True)
+            sha = subprocess.check_output(["git", "-C", str(runtime), "rev-parse", "HEAD"], text=True).strip()
+            (project / ".release-flow.json").write_text(json.dumps({"pipeline": {
+                "repository": "nbari/release", "sha": sha}}))
+            dest = project / "pinned-runtime"
+            result = subprocess.run(["bash", str(ROOT / "scripts/pipeline-pin.sh"),
+                                     "--project-dir", str(project), "--checkout", str(runtime),
+                                     "--dest", str(dest), "--workflow-repository", "nbari/release",
+                                     "--workflow-ref", "nbari/release/.github/workflows/candidate.yml@develop",
+                                     "--workflow-sha", sha, "--repository", "nbari/release-flow",
+                                     "--commit", "b" * 40], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 3, result.stderr)
+            self.assertIn("full commit SHA", result.stderr)
+            self.assertTrue(runtime.is_dir())
+            self.assertFalse(dest.exists())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
