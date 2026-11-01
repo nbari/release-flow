@@ -1,30 +1,32 @@
 # Rust application guidelines
 
-release-flow is a standalone, read-only Rust CLI for inspecting Git repository
-state, SemVer plans, release readiness and GitHub Actions evidence. Its crate
-and binary names remain release-flow. The release framework lives independently
-in nbari/release; no framework integration is enabled in this repository yet.
-Use plain imperative commit subjects without conventional prefixes.
+release-flow is a standalone, read-only Rust CLI. Keep clap definitions in
+cli/commands, typed conversion in cli/dispatch, execution in cli/actions and Git,
+version and readiness rules in the domain modules. Prefer Command argument arrays,
+contextual anyhow errors and typed reports. Status, plan and check never mutate
+files or remote state. Unknown readiness evidence fails closed.
 
-Keep clap definitions in cli/commands, typed argument conversion in cli/dispatch,
-execution in cli/actions, and Git/version/check logic in the existing domain
-modules. Use Command with argument arrays, contextual anyhow errors and typed
-reports. Parse external metadata as data; never execute it. Keep commands
-read-only: status, plan and check must not change files, refs, tags or releases.
+Use plain imperative commit subjects without conventional prefixes. Keep the
+crate/binary identity release-flow, the committed toolchain and locked Cargo
+dependencies. Run just check, formatting, strict Clippy, workspace tests, release
+build, consumer adapter contracts, actionlint and relevant packaging checks.
+Cargo development must not require a second framework checkout.
 
-Use rust-toolchain.toml and the committed Cargo.lock. Do not casually change
-crate identity, dependencies, compatibility or release versions. Preserve all
-historic signed tags, immutable assets, candidate refs and the isolated protected
-release-flow-storage branch. Never rewrite published history or publish a crate
-without explicit authorization.
+Release orchestration belongs to nbari/release. Installed scripts and Just
+recipes are checksum-managed by its public bundle installer; never patch or
+maintain a local engine fork. Fix framework defects upstream with regressions,
+then upgrade through the installer. Only tools/adapter.sh and application
+packaging tests own release-flow-specific policy. Align Action/workflow/config
+pins with the installed bundle's full source SHA; no mutable references.
 
-Run cargo fmt, strict locked Clippy, locked workspace tests and a locked release
-build. Keep CLI integration tests independent of external source checkouts. CI
-must build this application without the release framework. Unknown remote/CI
-evidence must remain visible and fail readiness checks closed.
+Keep ordinary Rust CI separate from candidate packaging. Use test-only sandbox
+candidates as the normal integration regression path. Validate machine types,
+package metadata, inventory, manifests and digests; a green build is not evidence
+of durable retention, promotion or publication. Build jobs get no publisher secrets.
 
-Submit normal changes through develop. Authorized maintainers may integrate by
-fast-forward after exact-source CI; main requires the Rust CI OK check and
-protected review policy. Do not disable protections to force an update. Future
-framework adoption is a separate task through its public pinned installation
-path; do not vendor an engine or add cross-repository CI dependencies now.
+Preserve signed tags, immutable candidate refs, retained artifacts, publication
+records, the isolated storage branch and archived history. Promote only the exact
+validated production commit through the guarded atomic signed procedure. Never
+rebuild a promoted version or overwrite release assets. Only GitHub Release is
+configured; crates.io and other publication require separate explicit authorization.
+Do not rewrite protected history or relax integrity checks without owner approval.

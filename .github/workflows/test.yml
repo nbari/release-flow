@@ -1,0 +1,53 @@
+name: Rust tests
+on:
+  workflow_call:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  test:
+    name: Rust tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validate release configuration without executing the adapter
+        id: release
+        uses: nbari/release@d9604935e9bdadd9ba2ab18af9a8290a39899ac6
+        with:
+          operation: validate
+          adapter: tools/adapter.sh
+      - name: Verify external Action identity and read-only result
+        env:
+          RESULT: ${{ steps.release.outputs.validation-json }}
+          RUNTIME: ${{ steps.release.outputs.runtime-revision }}
+        run: |
+          test "$RUNTIME" = d9604935e9bdadd9ba2ab18af9a8290a39899ac6
+          printf '%s' "$RESULT" | jq -e '.project=="release-flow" and .adapter_executed==false'
+          git diff --exit-code
+      - name: Install committed Rust toolchain components
+        run: rustup component add rustfmt clippy
+      - name: Validate Cargo metadata and lockfile
+        run: |
+          git ls-files --error-unmatch Cargo.lock
+          cargo metadata --locked --no-deps --format-version 1 | jq -e '.packages | any(.name=="release-flow" and .repository=="https://github.com/nbari/release-flow" and any(.targets[]; .name=="release-flow" and any(.kind[]; .=="bin")))'
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --workspace --all-features
+      - run: python3 tests/release_contract.py
+      - run: cargo build --release --locked
+      - name: CLI smoke tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./target/release/release-flow --version
+          ./target/release/release-flow status --json | jq -e 'type=="object"'
+          ./target/release/release-flow plan patch --json | jq -e '.bump=="patch" and .proposed_version!=null'
+          result=0
+          ./target/release/release-flow check --local-only --json > "$RUNNER_TEMP/readiness.json" || result=$?
+          test "$result" -le 1
+          jq -e '(.eligible|type)=="boolean"' "$RUNNER_TEMP/readiness.json"

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "project": "release-flow",
+  "adapter": "tools/adapter.sh",
+  "repository": "nbari/release-flow",
+  "remote": "origin",
+  "production_base": "develop",
+  "test_base": "sandbox",
+  "pipeline": {"repository": "nbari/release", "sha": "d9604935e9bdadd9ba2ab18af9a8290a39899ac6"},
+  "promotion": {
+    "main_branch": "main",
+    "push_remote": "origin",
+    "candidate_workflow": ".github/workflows/candidate.yml",
+    "required_job": "candidate / Candidate OK",
+    "signature_verification": "github",
+    "publisher_ref": "main"
+  },
+  "storage": {"uri": "github://nbari/release-flow"},
+  "publishers": {"github-release": {"required": true, "assets": ["*"]}}
+}

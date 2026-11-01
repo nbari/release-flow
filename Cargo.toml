@@ -7,6 +7,7 @@ description = "Read-only CLI for inspecting Git repositories, release readiness,
 license = "BSD-3-Clause"
 repository = "https://github.com/nbari/release-flow"
 readme = "README.md"
+include = ["src/**", "tests/cli_integration.rs", "Cargo.toml", "Cargo.lock", "build.rs", "README.md", "LICENSE"]
 keywords = ["release", "ci", "git", "cli", "semver"]
 categories = ["command-line-utilities", "development-tools"]
 

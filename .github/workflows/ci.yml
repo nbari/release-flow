@@ -8,44 +8,20 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  verify:
-    name: Rust verification
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Install Rust tooling
-        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-      - name: Formatting
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-      - name: Tests
-        run: cargo test --locked --workspace --all-features
-      - name: Build
-        run: cargo build --release --locked
-      - name: CLI smoke checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          ./target/release/release-flow --version
-          ./target/release/release-flow status --json | jq -e 'type == "object"'
-          ./target/release/release-flow plan patch --json | jq -e '.bump == "patch" and .proposed_version != null'
-          result=0
-          ./target/release/release-flow check --local-only --json > "$RUNNER_TEMP/readiness.json" || result=$?
-          test "$result" -le 1
-          jq -e '(.eligible | type) == "boolean"' "$RUNNER_TEMP/readiness.json"
+  test:
+    uses: ./.github/workflows/test.yml
+  build:
+    uses: ./.github/workflows/build.yml
   ci-ok:
     name: CI OK
     if: always()
-    needs: verify
+    needs: [test, build]
     runs-on: ubuntu-24.04
     steps:
       - env:
-          RESULT: ${{ needs.verify.result }}
-        run: test "$RESULT" = success
+          TEST: ${{ needs.test.result }}
+          BUILD: ${{ needs.build.result }}
+        run: test "$TEST" = success && test "$BUILD" = success

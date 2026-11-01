@@ -1,3 +1,5 @@
+import '.justfiles/deploy.just'
+
 default:
     @just --list
 
@@ -11,6 +13,7 @@ test:
     cargo test --locked --workspace --all-features
 
 check: fmt clippy test
+    python3 tests/release_contract.py
     cargo build --release --locked
 
 build:
