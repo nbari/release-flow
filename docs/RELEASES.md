@@ -206,3 +206,33 @@ at the pinned 0.1.0 framework SHA. Verify the full native matrix and every artif
 before authorizing another Rust production release. An idempotent publisher
 retry for existing 0.1.3 may verify its original retained bytes and published
 inventory using the new publisher, while preserving its tag and artifacts.
+
+## Framework 0.1.0 validation on 2026-11-02
+
+The installed framework/runtime is signed release commit
+`b052911198824598bf38a0b0b1d77748f1024121`. Its own production candidate
+retention, signed promotion and [GitHub publication](https://github.com/nbari/release/actions/runs/41442940427)
+passed. Marketplace publication remains intentionally deferred.
+
+- [Rust development CI](https://github.com/nbari/release-flow/actions/runs/41445373921)
+  passed for adoption commit `2d9f1bcc436d84e2a95d49f5187e4ba7e44138c5`,
+  including the external read-only Action and native compilation/smoke tests.
+- [External test candidate](https://github.com/nbari/release-flow/actions/runs/41447047948)
+  passed at `1da2090fb895dc6aad239e44acb882b08c9b45d6`, version 0.1.4.
+  All nine packaging legs and 19 artifacts passed. The candidate source and
+  called framework SHA were independently verified. Retention was skipped,
+  and promotion preflight rejected this test-only candidate at PF05.
+- The downloaded manifest SHA256 is
+  `14f8b730a0249689f7988e09b66ee2405609352c5f749e595d14e0cb0ca5aa5e`.
+  Local inspection verified every binary machine type, Linux DEB/RPM payload
+  and architecture, Windows archive, source-crate SHA and native musl version.
+  Missing, corrupted and wrong-source verification probes failed as required.
+- [External publisher recovery](https://github.com/nbari/release-flow/actions/runs/41448847489)
+  passed using framework 0.1.0 from develop against existing Rust release 0.1.3.
+  The existing signed tag, release metadata and all 21 asset IDs/digests were
+  unchanged. Its original source/runtime provenance remains intact; only a new
+  successful publication receipt was appended. Unconfigured publishers skipped.
+
+This validates the external candidate and recovery paths. It does not create a
+new Rust production release. A fresh Rust production candidate still needs its
+own durable retention and authorized signed promotion before publication.
