@@ -50,7 +50,7 @@ desired_json() {
 # list_releases: every release of the repository (all pages, drafts included)
 list_releases() {
   local out
-  out="$(gh api --paginate "repos/${repo}/releases?per_page=100")" || { echo "cannot list releases of ${repo}" >&2; return 1; }
+  out="$(gh api --paginate "repos/${repo}/releases?per_page=100" -H 'Cache-Control: no-cache')" || { echo "cannot list releases of ${repo}" >&2; return 1; }
   # --paginate prints one JSON array per page
   printf '%s' "${out}" | jq -cs 'map(.[]?)'
 }
@@ -159,9 +159,22 @@ latest_repair() {
 }
 
 apply() {
-  local obs state name
+  local obs state name delay
   obs="$(observe_json)" || return 1
   state="$(printf '%s' "${obs}" | jq -r .state)"
+  if [[ "${state}" == absent ]]; then
+    write_notes "${WORK}/notes.md"
+    gh release create "${version}" --repo "${repo}" --draft --verify-tag --title "${version}" \
+      --notes-file "${WORK}/notes.md" >&2 || return 1
+    # A successful create can precede visibility in the release listing. Create
+    # exactly once and wait at most 61 seconds; never upload on absent evidence.
+    for delay in 0 1 2 4 8 16 30; do
+      if (( delay > 0 )); then sleep "${delay}"; fi
+      obs="$(observe_json)" || return 1
+      state="$(printf '%s' "${obs}" | jq -r .state)"
+      [[ "${state}" == absent ]] || break
+    done
+  fi
   case "${state}" in
     conflict)
       echo "github-release: refusing to modify: $(printf '%s' "${obs}" | jq -c .detail)" >&2
@@ -172,10 +185,8 @@ apply() {
       return 0
       ;;
     absent)
-      write_notes "${WORK}/notes.md"
-      gh release create "${version}" --repo "${repo}" --draft --verify-tag --title "${version}" \
-        --notes-file "${WORK}/notes.md" >&2 || return 1
-      obs="$(observe_json)" || return 1
+      echo "github-release: draft ${version} not visible after creation; retry this channel when GitHub listing is available" >&2
+      return 1
       ;;
   esac
   if [[ "$(printf '%s' "${obs}" | jq -r '.detail.draft')" == "false" ]]; then

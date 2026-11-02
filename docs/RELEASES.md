@@ -8,22 +8,26 @@ files are installed and checksum-managed, with no local modifications.
 
 ## Installation and upgrades
 
-The installed framework revision is recorded in `.release-flow-bundle.json`.
-It is a reviewed source snapshot whose framework VERSION is 0.0.0, rather than
-a signed production framework distribution. Reproduce the installed GitHub-only
-toolset from this application's clean checkout:
+The installed framework is signed [Release 0.1.0](https://github.com/nbari/release/releases/tag/0.1.0),
+commit `b052911198824598bf38a0b0b1d77748f1024121`, recorded in
+`.release-flow-bundle.json`. Its immutable release attestation and published
+bundle were verified, and all 22 GitHub/Cargo managed files match that bundle.
+The smaller profile uses the public pinned-source installation path. Reproduce
+it from this application's clean checkout:
 
 ```bash
 RF_SOURCE="$(mktemp -d)"
 RF_OUTPUT="$(mktemp -d)"
 RF_SHA="$(jq -er .source_commit .release-flow-bundle.json)"
+RF_VERSION="$(jq -er .bundle_version .release-flow-bundle.json)"
+gh release verify "$RF_VERSION" --repo nbari/release
 git clone https://github.com/nbari/release.git "$RF_SOURCE/source"
 git -C "$RF_SOURCE/source" checkout --detach "$RF_SHA"
 test -z "$(git -C "$RF_SOURCE/source" status --porcelain)"
 bash "$RF_SOURCE/source/scripts/release-flow-bundle.sh" \
-  --version 0.0.0 --out "$RF_OUTPUT" --workflow-mode reusable --profile github
-tar -xzf "$RF_OUTPUT/release-flow-bundle-0.0.0.tar.gz" -C "$RF_OUTPUT"
-bash "$RF_OUTPUT/release-flow-bundle-0.0.0/install.sh" \
+  --version "$RF_VERSION" --out "$RF_OUTPUT" --workflow-mode reusable --profile github
+tar -xzf "$RF_OUTPUT/release-flow-bundle-$RF_VERSION.tar.gz" -C "$RF_OUTPUT"
+bash "$RF_OUTPUT/release-flow-bundle-$RF_VERSION/install.sh" \
   --target . --with-cargo-adapter
 ```
 
@@ -113,8 +117,10 @@ a bypass on integrity or immutable tags. Future policy changes require owner
 authorization and review of live drift; do not create duplicate rulesets or
 blindly overwrite another administrator's changes.
 
-Start with `git switch sandbox` and `just deploy`. Test-only candidates compile
+Start with `git switch sandbox` and `just deploy-test`. Test-only candidates compile
 and package for real but cannot be promoted; durable retention is skipped.
+`just deploy`, `deploy-minor` and `deploy-major` require develop; they reject
+every other branch without fetching or running the adapter.
 
 For a later explicitly authorized production release:
 
@@ -187,5 +193,16 @@ Immutable releases are enabled. candidate-storage allows
 The old storage branch and release identities were unchanged by that test. The
 main promotion policy described above is now active.
 
-Production candidate retention, guarded promotion and GitHub publication are
-separate later authorized stages. None occurred during this integration test.
+The integration runs above were test-only. Rust application 0.1.3 was subsequently
+retained, promoted and [published on GitHub](https://github.com/nbari/release-flow/releases/tag/0.1.3)
+using its original framework revision; it is not relabeled as a 0.1.0-framework
+build. Its [independent publisher retry](https://github.com/nbari/release-flow/actions/runs/41329361837)
+reused the retained bytes. The new framework's own
+[0.1.0 publication](https://github.com/nbari/release/actions/runs/41442940427)
+passed on the first publishing attempt.
+
+For the current adoption, run development CI and a fresh sandbox test candidate
+at the pinned 0.1.0 framework SHA. Verify the full native matrix and every artifact
+before authorizing another Rust production release. An idempotent publisher
+retry for existing 0.1.3 may verify its original retained bytes and published
+inventory using the new publisher, while preserving its tag and artifacts.

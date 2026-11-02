@@ -4,20 +4,25 @@
 
 release_flow_deploy := 'bash ' + quote(parent_directory(source_directory()) / 'scripts' / 'release-deploy.sh') + ' --project-dir ' + quote(justfile_directory())
 
-# Prepare and push a patch release candidate (test_base: test-only, production_base: production)
+# Prepare and push a production patch candidate from production_base (normally develop)
 [group('release')]
 deploy:
     @{{ release_flow_deploy }} patch
 
-# Prepare and push a minor release candidate (test_base: test-only, production_base: production)
+# Prepare and push a production minor candidate from production_base (normally develop)
 [group('release')]
 deploy-minor:
     @{{ release_flow_deploy }} minor
 
-# Prepare and push a major release candidate (test_base: test-only, production_base: production)
+# Prepare and push a production major candidate from production_base (normally develop)
 [group('release')]
 deploy-major:
     @{{ release_flow_deploy }} major
+
+# Prepare and push a non-promotable test candidate from test_base (normally sandbox)
+[group('release')]
+deploy-test bump="patch":
+    @{{ release_flow_deploy }} --test-only {{ quote(bump) }}
 
 release_flow_scripts := parent_directory(source_directory()) / 'scripts'
 

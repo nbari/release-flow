@@ -19,8 +19,9 @@ then upgrade through the installer. Only tools/adapter.sh and application
 packaging tests own release-flow-specific policy. Align Action/workflow/config
 pins with the installed bundle's full source SHA; no mutable references.
 
-Keep ordinary Rust CI separate from candidate packaging. Use test-only sandbox
-candidates as the normal integration regression path. Validate machine types,
+Keep ordinary Rust CI separate from candidate packaging. Use `just deploy-test`
+on sandbox as the normal integration regression path; production deploy commands
+require develop. Validate machine types,
 package metadata, inventory, manifests and digests; a green build is not evidence
 of durable retention, promotion or publication. Build jobs get no publisher secrets.
 

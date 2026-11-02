@@ -104,6 +104,8 @@ other publishers and unused storage backends stay in the framework repository.
 The release engine is maintained in nbari/release, with no local implementation
 changes. Cargo source and the published crate do not include that engine.
 
+The installed framework is signed [Release 0.1.0](https://github.com/nbari/release/releases/tag/0.1.0),
+pinned at `b052911198824598bf38a0b0b1d77748f1024121`.
 The thin `candidate.yml` and `release.yml` callers use the same reviewed framework
 SHA as the validation Action, configuration and installed bundle. Candidate
 packaging runs on native architecture runners and declares this inventory:
@@ -122,7 +124,7 @@ for the exact matrix, test evidence, required branch policies and recovery.
 
 ```bash
 git switch sandbox
-just deploy                    # real test-only build; never promotable
+just deploy-test               # real test-only build; never promotable
 
 # A later, separately authorized production release:
 git switch develop
@@ -132,6 +134,10 @@ just release-promote release/X.Y.Z-<base12> <candidate-sha> --dry-run
 # After reviewing every production precondition:
 just release-promote release/X.Y.Z-<base12> <candidate-sha>
 ```
+
+`deploy`, `deploy-minor` and `deploy-major` require develop. Other branches
+are rejected before fetching, running the adapter or preparing a candidate.
+Sandbox tests use `deploy-test`, optionally followed by `minor` or `major`.
 
 Promotion creates the signed immutable version tag and atomically advances
 main/develop to the verified candidate. The reusable publisher retrieves retained

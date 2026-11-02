@@ -1,22 +1,22 @@
 {
   "schema_version": 1,
-  "bundle_version": "0.0.0",
-  "source_commit": "43d2b794259f1681fe729696520891fa5c3ba763",
+  "bundle_version": "0.1.0",
+  "source_commit": "b052911198824598bf38a0b0b1d77748f1024121",
   "profile": "github",
   "files": [
     {
       "path": ".github/workflows/candidate.yml",
-      "sha256": "41d7a0af0b27c6b189729c589aa093817236d919b36a40ced46701b056302e01",
+      "sha256": "30fdfa9ee1d5cda2767b86f4a01aa0eb3c8b46ebca892208c366d07223e3598d",
       "mode": "644"
     },
     {
       "path": ".github/workflows/release.yml",
-      "sha256": "ef36a5bc54372b3bf89df09ba7db56813ce35d1b2d8251e4848de2b34d8497dd",
+      "sha256": "7434ee52f9ed67efd55a939350f4b1f0a57161c8e485beb85e98a72eb70688f6",
       "mode": "644"
     },
     {
       "path": ".justfiles/deploy.just",
-      "sha256": "1eb0205ae005ce6b18129185da4d50a71cdc675bc9d9aef7e0310710d516ca3f",
+      "sha256": "a9271257a391f10ad5c886065c5702d7d89d689856739be2d784f846ab8fe84d",
       "mode": "644"
     },
     {
@@ -66,7 +66,7 @@
     },
     {
       "path": "scripts/publishers/github-release.sh",
-      "sha256": "e9e8130ac40057efeafee5e54a24e677a5b760a6d01fae474a4d2697e5734634",
+      "sha256": "59eb965a9f20d0d674dc8fc99d2fb70e70c1205e6ed4e25b15a717c2df21eabf",
       "mode": "755"
     },
     {
@@ -76,7 +76,7 @@
     },
     {
       "path": "scripts/release-deploy.sh",
-      "sha256": "9a6927988f62d23f08a30795413bb2b0833cb6ca215c2bd138b62a0cdf23d707",
+      "sha256": "24d34e1e9d54d342bd4dba02c260f6dd8ca68bd2e5d105337d1edd562e40b6eb",
       "mode": "755"
     },
     {

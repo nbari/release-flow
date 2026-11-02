@@ -85,3 +85,9 @@ submodules, shared source directories or private repository dependencies.
 GitHub storage continues using the original protected metadata branch without
 relabeling old manifests as new-framework provenance. See [RELEASES.md](RELEASES.md)
 for readiness, actual test evidence and the separate production authorization.
+
+The installed framework now comes from signed nbari/release 0.1.0 at
+`b052911198824598bf38a0b0b1d77748f1024121`, using its public pinned-source
+bundle path and the GitHub-only profile. Current sandbox packaging tests use
+`just deploy-test`; production deploy commands require develop. Framework and
+application versions remain independent.

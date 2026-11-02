@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Branch-aware deploy: prepare and push a release candidate whose policy is
-# selected by the current branch.
+# Prepare and push a release candidate with an explicit branch policy.
 #
-#   test_base       -> test-only candidate  (release/test/X.Y.Z-<base12>)
-#   production_base -> production candidate (release/X.Y.Z-<base12>)
+#   default     -> production_base only (release/X.Y.Z-<base12>)
+#   --test-only -> test_base only       (release/test/X.Y.Z-<base12>)
 #   anything else   -> rejected (exit 3) without touching Git
 #
 # Exit codes: 0 ok, 1 failure, 2 usage error, 3 branch policy rejection.
@@ -12,7 +11,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF' >&2
-Usage: release-deploy.sh [--project-dir DIR] <patch|minor|major>
+Usage: release-deploy.sh [--project-dir DIR] [--test-only] <patch|minor|major>
 EOF
   exit 2
 }
@@ -28,12 +27,18 @@ die() {
 
 project_dir="."
 bump=""
+mode="production"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --project-dir)
       [[ $# -ge 2 ]] || usage
       project_dir="$2"
       shift 2
+      ;;
+    --test-only)
+      [[ "${mode}" == "production" ]] || usage
+      mode="test-only"
+      shift
       ;;
     patch|minor|major)
       [[ -z "${bump}" ]] || usage
@@ -121,12 +126,10 @@ for key in production_base test_base; do
   fi
 done
 
-if [[ "${branch}" == "${cfg_test_base}" ]]; then
-  mode="test-only"
-elif [[ "${branch}" == "${cfg_prod_base}" ]]; then
-  mode="production"
+if [[ "${mode}" == "test-only" ]]; then
+  [[ "${branch}" == "${cfg_test_base}" ]] || die "Refusing to deploy from '${branch}': test-only deploy requires '${cfg_test_base}'. Use 'just deploy' on '${cfg_prod_base}' for production candidates." 3
 else
-  die "Refusing to deploy from '${branch}': deploy runs only on configured base branches. Allowed: '${cfg_test_base}' (test-only candidate), '${cfg_prod_base}' (production candidate)." 3
+  [[ "${branch}" == "${cfg_prod_base}" ]] || die "Refusing to deploy from '${branch}': production deploy requires '${cfg_prod_base}'. Use 'just deploy-test' on '${cfg_test_base}' for test-only candidates." 3
 fi
 
 head_sha="$(git rev-parse --verify HEAD)"
